@@ -2,6 +2,39 @@
 
 Изменения dotfiles и окружения. Формат: дата, контекст, изменения, проверка.
 
+## 2026-08-13 — git: email убран из публичного репо, identity = noreply
+
+### Контекст
+
+- Репозиторий публичный (проверено `git ls-remote` без авторизации).
+- `drresist@gmail.com` светился в авторстве коммитов на origin; файл
+  `configs/git/gitconfig` с email готовился уйти туда же с новым коммитом.
+
+### Изменения
+
+- Email в `configs/git/gitconfig` заменён на GitHub noreply
+  (`22808856+drresist@users.noreply.github.com`). Файл залинкован как
+  `~/.gitconfig`, поэтому все новые коммиты локально тоже идут с noreply.
+- История полностью переписана (rebase --root + явный --author): автор и
+  коммитер всех коммитов — noreply.
+- Force-push в `origin/main` (с `--force-with-lease`): старая история с
+  gmail-авторством заменена.
+- Remote переведён с HTTPS на SSH (`git@github.com:drresist/dotfiles.git`):
+  в keychain не было креденшелов GitHub, HTTPS-push не работал.
+
+### Проверка
+
+- `git log --all --format='%ae %ce' | sort -u` — единственный email noreply.
+- `git grep drresist@gmail` по всем коммитам — пусто.
+- `main` синхронизирован с `origin/main`.
+
+### Примечание
+
+- GitHub может некоторое время отдавать старые (dangling) коммиты по прямым
+  SHA; со временем они удаляются сборщиком мусора.
+- Если в рабочих репозиториях нужен другой email — задавать локально,
+  `git config user.email` в конкретном репо.
+
 ## 2026-08-13 — dotfiles: оживление репозитория, новый инсталлятор
 
 ### Контекст
