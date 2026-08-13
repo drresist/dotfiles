@@ -1,0 +1,20 @@
+# bat configuration
+# Run `bat --help` to see all options
+
+# Set theme (use `bat --list-themes` to see all themes)
+--theme="Catppuccin Mocha"
+
+# Show line numbers
+--style="numbers,changes,header"
+
+# Use italic text
+--italic-text=always
+
+# Show decorations (borders)
+--decorations=always
+
+# Paging (never use a pager)
+--paging=never
+
+# Show non-printable characters
+--show-all

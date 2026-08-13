@@ -1,0 +1,102 @@
+# Starship configuration
+# https://starship.rs/config/
+
+format = """
+[╭─](bold bright-black)$username$hostname$directory$git_branch$git_status$kubernetes$docker_context$package$golang$rust$nodejs$python$java
+[╰─](bold bright-black)$character"""
+
+[character]
+success_symbol = "[➜](bold green)"
+error_symbol = "[✗](bold red)"
+vicmd_symbol = "[V](bold green)"
+
+[username]
+style_user = "blue bold"
+style_root = "red bold"
+format = "[$user]($style) "
+disabled = false
+show_always = false
+
+[hostname]
+ssh_only = true
+format = "@ [$hostname](bold yellow) "
+disabled = false
+
+[directory]
+truncation_length = 3
+truncation_symbol = "…/"
+format = "[$path]($style)[$read_only]($read_only_style) "
+style = "cyan bold"
+read_only_style = "red"
+read_only = " 󰌾"
+
+[git_branch]
+symbol = ""
+format = "[$symbol$branch]($style) "
+style = "purple bold"
+
+[git_status]
+format = '([$all_status$ahead_behind]($style) )'
+style = "yellow bold"
+conflicted = "​"
+ahead = "​"
+behind = "​"
+diverged = "​"
+up_to_date = ""
+untracked = "​"
+stashed = "​"
+modified = "​"
+staged = "​"
+renamed = "​"
+deleted = "​"
+
+[kubernetes]
+symbol = ""
+format = '[$context( \($namespace\))]($style) in '
+style = "cyan bold"
+disabled = false
+
+[docker_context]
+symbol = ""
+format = '[$context]($style) '
+style = "blue bold"
+disabled = false
+
+[package]
+symbol = ""
+format = '[$version]($style) '
+style = "208 bold"
+disabled = false
+
+[golang]
+symbol = ""
+format = '[$version]($style) '
+style = "cyan bold"
+disabled = false
+
+[rust]
+symbol = ""
+format = '[$version]($style) '
+style = "red bold"
+disabled = false
+
+[nodejs]
+symbol = ""
+format = '[$version]($style) '
+style = "green bold"
+disabled = false
+
+[python]
+symbol = ""
+format = '[${pyenv_prefix}(${version} )(\($virtualenv\))]($style) '
+style = "yellow bold"
+disabled = false
+
+[java]
+symbol = ""
+format = '[$version]($style) '
+style = "red dimmed"
+disabled = false
+
+[line_break]
+disabled = true

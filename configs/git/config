@@ -1,0 +1,45 @@
+# Git configuration
+# Include this in your ~/.gitconfig with: [include] path = ~/.config/git/config
+
+[core]
+    pager = delta
+    editor = nvim
+    autocrlf = input
+
+[interactive]
+    diffFilter = delta --color-only
+
+[delta]
+    navigate = true
+    light = false
+    line-numbers = true
+    side-by-side = true
+    syntax-theme = Catppuccin Mocha
+
+[merge]
+    conflictstyle = diff3
+
+[diff]
+    colorMoved = default
+
+[alias]
+    st = status
+    co = checkout
+    br = branch
+    ci = commit
+    lg = log --oneline --decorate --graph --all
+    last = log -1 HEAD
+    unstage = reset HEAD --
+    discard = checkout --
+
+[init]
+    defaultBranch = main
+
+[push]
+    default = simple
+
+[pull]
+    rebase = true
+
+[fetch]
+    prune = true
