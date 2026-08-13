@@ -1,114 +1,113 @@
-# Zsh configuration
-# Place as ~/.zshrc
+# Zsh configuration for dotfiles
+# Uses Zinit + Powerlevel10k for prompt
+# Sources common aliases from the dotfiles repo
 
-# Path
-export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"
-
-# Editor
-export EDITOR="nvim"
-export VISUAL="nvim"
+# Early PATH (macOS: include Apple Silicon Homebrew before Intel paths)
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$HOME/.local/bin:$HOME/.cargo/bin:$HOME/bin:/usr/local/bin:$PATH"
 
 # History
-HISTFILE=~/.zsh_history
+HISTFILE="$HOME/.zsh_history"
 HISTSIZE=100000
 SAVEHIST=100000
 setopt APPEND_HISTORY
 setopt INC_APPEND_HISTORY
 setopt SHARE_HISTORY
-setopt HIST_IGNORE_DUPS
 setopt HIST_IGNORE_ALL_DUPS
 setopt HIST_SAVE_NO_DUPS
 setopt HIST_REDUCE_BLANKS
 setopt HIST_VERIFY
 
-# Auto-completion
-autoload -Uz compinit
-compinit -d ~/.zcompdump
-zstyle ':completion:*' menu select
-zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|=*' 'l:|=* r:|=*'
-
-# Auto-suggestions and syntax highlighting (if installed)
-if [ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]; then
-    source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+# Zinit setup
+ZINIT_HOME="${XDG_DATA_HOME:-${HOME}/.local/share}/zinit/zinit.git"
+if [[ ! -d "$ZINIT_HOME" ]]; then
+    mkdir -p "$(dirname $ZINIT_HOME)"
+    git clone https://github.com/zdharma-continuum/zinit.git "$ZINIT_HOME"
 fi
-if [ -f /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]; then
-    source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+source "${ZINIT_HOME}/zinit.zsh"
+
+# Disable p10k config wizard before loading the theme
+POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true
+
+# Powerlevel10k instant prompt
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+    source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi
 
-# fzf
-export FZF_DEFAULT_OPTS="--height 40% --layout=reverse --border --preview 'bat --color=always --style=numbers --line-range=:500 {}'"
-export FZF_CTRL_T_OPTS="--preview 'bat --color=always --style=numbers --line-range=:500 {}'"
-export FZF_ALT_C_OPTS="--preview 'eza --tree --level=2 --color=always {} | head -200'"
-[ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+# Powerlevel10k theme
+zinit ice depth=1
+zinit light romkatv/powerlevel10k
 
-# zoxide
-eval "$(zoxide init zsh)"
+# Load p10k config if it exists
+[[ -f ~/.p10k.zsh ]] && source ~/.p10k.zsh
 
-# Starship
-eval "$(starship init zsh)"
+# Oh My Zsh libs & plugins via Zinit (turbo mode for speed)
+zinit wait lucid for \
+    OMZL::functions.zsh \
+    OMZL::completion.zsh \
+    OMZL::history.zsh \
+    OMZL::key-bindings.zsh \
+    OMZL::termsupport.zsh \
+    OMZL::directories.zsh \
+    OMZP::colored-man-pages \
+    OMZP::colorize \
+    OMZP::git \
+    OMZP::history
 
-# Key bindings
-bindkey -e
-bindkey '^[[A' history-search-backward
-bindkey '^[[B' history-search-forward
+# Community plugins (turbo)
+zinit wait lucid for \
+    zsh-users/zsh-completions \
+    zsh-users/zsh-autosuggestions \
+    zsh-users/zsh-history-substring-search \
+    zdharma-continuum/fast-syntax-highlighting
 
-# Aliases
-alias v="nvim"
-alias vi="nvim"
-alias vim="nvim"
-alias cat="bat"
-alias ls="eza --group-directories-first --icons"
-alias ll="eza -lbF --git --icons"
-alias la="eza -lbhHigUmuSa --time-style=long-iso --git --color-scale --icons"
-alias lt="eza --tree --level=2 --icons"
-alias ..="cd .."
-alias ...="cd ../.."
-alias grep="rg"
-alias find="fd"
-alias top="btop"
+# Source centralized aliases (eza, git, docker, k8s, mkcd, fzfp, etc.)
+[ -f ~/.dotfiles/configs/eza/aliases.sh ] && source ~/.dotfiles/configs/eza/aliases.sh
 
-# Git aliases
-alias g="git"
-alias gs="git status"
-alias ga="git add"
-alias gc="git commit"
-alias gp="git push"
-alias gl="git pull"
-alias gd="git diff"
-alias gco="git checkout"
-alias gb="git branch"
+# Useful personal/general aliases (cleaned)
+alias chmox="chmod +x"
+# No alias needed on macOS; the Zed CLI is already `zed`.
 
-# Docker aliases
-alias d="docker"
-alias dc="docker compose"
-alias dps="docker ps"
-alias dlogs="docker logs -f"
+# Custom meson wrapper (kept for your workflow; uses epm for deps)
+meson() {
+    if [[ "$1" == "build" || "$1" == "setup" ]]; then
+        local MESON_BUILD="meson.build"
+        local LOCK_FILE="epm.lock"
 
-# Kubernetes aliases
-alias k="kubectl"
-alias kg="kubectl get"
-alias kd="kubectl describe"
-alias kdel="kubectl delete"
-alias kapply="kubectl apply -f"
+        if [[ -f "$MESON_BUILD" ]]; then
+            local DEPS=$(grep -rhoE "dependency\('[^']+" . --include="meson.build" 2>/dev/null | sed "s/dependency('//" | sort -u)
+            local DEPS_HASH=$(printf '%s' "$DEPS" | shasum -a 256 | cut -d' ' -f1)
 
-# Functions
-mkcd() {
-    mkdir -p "$1" && cd "$1"
+            local need_install=true
+            if [[ -f "$LOCK_FILE" ]]; then
+                local LOCK_HASH=$(grep "^hash:" "$LOCK_FILE" | cut -d' ' -f2)
+                [[ "$DEPS_HASH" == "$LOCK_HASH" ]] && need_install=false
+            fi
+
+            if $need_install; then
+                echo "→ installing deps..."
+                if epmi $(echo "$DEPS" | sed "s/.*/pkgconfig(&)/"); then
+                    {
+                        echo "hash: $DEPS_HASH"
+                        echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                        echo "deps:"
+                        echo "$DEPS" | sed "s/^/  - /"
+                    } > "$LOCK_FILE"
+                    echo "✓ lock updated"
+                else
+                    echo "⚠ install failed, lock not updated"
+                fi
+            fi
+        fi
+    fi
+
+    command meson "$@"
 }
 
-fzfp() {
-    fzf --preview 'bat --style=numbers --color=always --line-range :500 {}'
-}
+# SSH agent (Bitwarden example - customize or comment)
+# export SSH_AUTH_SOCK=$HOME/.var/app/com.bitwarden.desktop/data/.bitwarden-ssh-agent.sock
 
-# Colors
-autoload -Uz colors && colors
+# Atuin (history) via zinit
+zinit wait lucid atload'eval "$(atuin init zsh)"' for zdharma-continuum/null
 
-# Prompt (backup if starship fails)
-# PROMPT='%F{cyan}%n%f@%F{yellow}%m%f:%F{blue}%~%f$ '
-
-# Window title
-precmd() { print -Pn "\e]0;%~\a" }
-eval "$(mise activate zsh)"
-
-
-export SSH_AUTH_SOCK=/Users/mfesenko/.bitwarden-ssh-agent.sock
+# Optional: fastfetch on new shell (uncomment if you want it)
+# fastfetch

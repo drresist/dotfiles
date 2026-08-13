@@ -1,8 +1,13 @@
 # Fish shell configuration
 # Place in ~/.config/fish/config.fish
 
-# Set PATH
-set -gx PATH $HOME/.local/bin $HOME/bin /usr/local/bin $PATH
+# Set PATH (guarded: prepends only if absent, so no duplicates across shells;
+# /usr/local/bin is already in /etc/paths)
+for p in $HOME/.local/bin $HOME/bin
+    if not contains $p $PATH
+        set -gx PATH $p $PATH
+    end
+end
 
 # Editor
 set -gx EDITOR nvim
@@ -23,7 +28,7 @@ fzf --fish | source
 zoxide init fish | source
 
 # Starship prompt
-starship init fish --cmd-duration=0 | source
+starship init fish | source
 
 # Aliases
 alias v="nvim"
@@ -37,7 +42,6 @@ alias lt="eza --tree --level=2 --icons"
 alias ..="cd .."
 alias ...="cd ../.."
 alias grep="rg"
-alias find="fd"
 alias top="btop"
 
 # Git aliases
@@ -97,5 +101,5 @@ set -g fish_pager_color_prefix cyan
 set -g fish_pager_color_completion normal
 set -g fish_pager_color_description yellow
 set -g fish_pager_color_progress brwhite
-set -g fish_pager_color_selected_background --background
+set -g fish_pager_color_selected_background --background=blue
 set -g fish_color_history_current cyan

@@ -1,0 +1,5 @@
+[user]
+	email = 22808856+drresist@users.noreply.github.com
+	name = MFesenko
+[include]
+	path = ~/.config/git/config

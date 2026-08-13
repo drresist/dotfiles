@@ -2,7 +2,7 @@
 # https://starship.rs/config/
 
 format = """
-[╭─](bold bright-black)$username$hostname$directory$git_branch$git_status$kubernetes$docker_context$package$golang$rust$nodejs$python$java
+[╭─](bold bright-black)$username$hostname$directory$git_branch$git_status$kubernetes$docker_context$package$golang$rust$nodejs$python$java$cmd_duration
 [╰─](bold bright-black)$character"""
 
 [character]
@@ -31,72 +31,77 @@ read_only_style = "red"
 read_only = " 󰌾"
 
 [git_branch]
-symbol = ""
+symbol = " "
 format = "[$symbol$branch]($style) "
 style = "purple bold"
 
 [git_status]
 format = '([$all_status$ahead_behind]($style) )'
 style = "yellow bold"
-conflicted = "​"
-ahead = "​"
-behind = "​"
-diverged = "​"
+conflicted = " ${count}"
+ahead = "⇡${count}"
+behind = "⇣${count}"
+diverged = "⇕⇡${ahead_count}⇣${behind_count}"
 up_to_date = ""
-untracked = "​"
-stashed = "​"
-modified = "​"
-staged = "​"
-renamed = "​"
-deleted = "​"
+untracked = "?${count}"
+stashed = " ${count}"
+modified = "!${count}"
+staged = "+${count}"
+renamed = "»${count}"
+deleted = "✘${count}"
 
 [kubernetes]
-symbol = ""
-format = '[$context( \($namespace\))]($style) in '
+symbol = " "
+format = '[$context( \($namespace\))]($style) '
 style = "cyan bold"
-disabled = false
+disabled = true
 
 [docker_context]
-symbol = ""
+symbol = " "
 format = '[$context]($style) '
 style = "blue bold"
 disabled = false
 
 [package]
-symbol = ""
+symbol = " "
 format = '[$version]($style) '
 style = "208 bold"
 disabled = false
 
 [golang]
-symbol = ""
+symbol = " "
 format = '[$version]($style) '
 style = "cyan bold"
 disabled = false
 
 [rust]
-symbol = ""
+symbol = " "
 format = '[$version]($style) '
 style = "red bold"
 disabled = false
 
 [nodejs]
-symbol = ""
+symbol = " "
 format = '[$version]($style) '
 style = "green bold"
 disabled = false
 
 [python]
-symbol = ""
+symbol = " "
 format = '[${pyenv_prefix}(${version} )(\($virtualenv\))]($style) '
 style = "yellow bold"
 disabled = false
 
 [java]
-symbol = ""
+symbol = " "
 format = '[$version]($style) '
 style = "red dimmed"
 disabled = false
+
+[cmd_duration]
+min_time = 2000
+format = " took [$duration]($style) "
+style = "yellow bold"
 
 [line_break]
 disabled = true

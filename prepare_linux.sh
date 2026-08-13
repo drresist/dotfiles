@@ -1,4 +1,11 @@
 #!/bin/bash
+#
+# dotfiles prepare script (Linux focused, with macOS support)
+# For a cleaner macOS-only experience, use prepare_macos.sh instead.
+#
+# Strict mode + helpers for safe, maintainable installs.
+
+set -euo pipefail
 
 # Функция для проверки наличия команды
 command_exists() {
@@ -17,6 +24,28 @@ is_macos() {
 is_linux() {
 	[ "$(get_os)" = "Linux" ]
 }
+
+# Architecture normalizer (amd64/arm64) for manual downloads
+get_arch() {
+	local arch
+	arch=$(uname -m)
+	case "$arch" in
+		x86_64) echo "amd64" ;;
+		aarch64|arm64) echo "arm64" ;;
+		*) echo "$arch" ;;
+	esac
+}
+
+# Simple package manager detector (extendable)
+get_pkg_manager() {
+	if command_exists apt-get; then echo "apt"; 
+	elif command_exists dnf; then echo "dnf";
+	elif command_exists yum; then echo "yum";
+	else echo "unknown"; fi
+}
+
+# Source shared code
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 # Установка Homebrew
 install_homebrew() {
@@ -37,20 +66,35 @@ install_homebrew() {
 	fi
 }
 
+
+# Simple brew/apt/yum (or dnf) wrapper for common CLI tools
+install_pkg() {
+	local brew_name="$1" apt_name="${2:-$1}" yum_name="${3:-$apt_name}"
+	if is_macos; then
+		brew install "$brew_name"
+	elif [ "$(get_pkg_manager)" = "apt" ]; then
+		sudo apt-get update -qq && sudo apt-get install -y "$apt_name"
+	elif [ "$(get_pkg_manager)" = "dnf" ]; then
+		sudo dnf install -y "$yum_name"
+	elif [ "$(get_pkg_manager)" = "yum" ]; then
+		sudo yum install -y "$yum_name"
+	else
+		echo "No supported package manager for $apt_name; install manually."
+		return 1
+	fi
+}
+
 # Установка tmux
 install_tmux() {
 	if ! command_exists tmux; then
 		echo "Установка tmux..."
 		if is_macos; then
 			brew install tmux
-		elif command_exists apt-get; then
-			sudo apt-get update
-			sudo apt-get install -y tmux
-		elif command_exists yum; then
-			sudo yum install -y tmux
 		else
-			echo "Не удалось определить менеджер пакетов. Установите tmux вручную."
-			exit 1
+			install_pkg tmux tmux tmux || {
+				echo "Не удалось определить менеджер пакетов. Установите tmux вручную."
+				return 1
+			}
 		fi
 	else
 		echo "tmux уже установлен."
@@ -71,28 +115,38 @@ setup_tmux() {
 	echo "Конфигурация tmux установлена."
 }
 
-# Установка Neovim
+# Установка Neovim (pinned for reproducibility)
+NEOVIM_VERSION="v0.10.0"
 
-# Установка Neovim версии 0.10.0
 install_neovim() {
-	if ! command_exists nvim || [[ $(nvim --version | head -n1 | awk '{print $2}') != "v0.10"* ]]; then
-		echo "Установка Neovim версии 0.10.0..."
+	local current_ver=""
+	if command_exists nvim; then
+		current_ver=$(nvim --version | head -n1 | grep -o 'v[0-9.]*' | head -1 || echo "")
+	fi
+	if [ -z "$current_ver" ] || [[ "$current_ver" != "$NEOVIM_VERSION" && "$current_ver" != v0.10* ]]; then
+		echo "Установка Neovim ${NEOVIM_VERSION}..."
 
 		if is_macos; then
 			brew install neovim
 		else
-			local temp_dir=$(mktemp -d)
-			cd "$temp_dir"
-			curl -Lo nvim-linux64.tar.gz https://github.com/neovim/neovim/releases/download/v0.10.0/nvim-linux64.tar.gz
-			tar xzf nvim-linux64.tar.gz
-			sudo cp -r nvim-linux64/* /usr/local/
-			cd "$HOME"
-			rm -rf "$temp_dir"
+			download_and_install \
+				"https://github.com/neovim/neovim/releases/download/${NEOVIM_VERSION}/nvim-linux64.tar.gz" \
+				tar.gz "nvim-linux64/bin/nvim" "/usr/local/bin"
+			# Also bring runtime etc if needed (the tar layout is nvim-linux64/*)
+			# For simplicity the helper handles the bin; full tree copy for linux manual if missing
+			if [ ! -d /usr/local/share/nvim ]; then
+				# lightweight fallback - the tar top level copy was original behavior
+				local td; td=$(mktemp -d); cd "$td"
+				curl -fsSL -o nvim.tar.gz "https://github.com/neovim/neovim/releases/download/${NEOVIM_VERSION}/nvim-linux64.tar.gz"
+				tar xzf nvim.tar.gz
+				sudo cp -r nvim-linux64/* /usr/local/ 2>/dev/null || true
+				cd "$HOME"; rm -rf "$td"
+			fi
 		fi
 
-		echo "Neovim версии 0.10.0 установлен."
+		echo "Neovim ${NEOVIM_VERSION} установлен."
 	else
-		echo "Neovim версии 0.10.0 уже установлен."
+		echo "Neovim ${NEOVIM_VERSION} уже установлен."
 	fi
 }
 
@@ -119,17 +173,16 @@ install_jetbrains_nerd_font() {
 	echo "Установка JetBrains Nerd Font..."
 
 	if is_macos; then
-		brew tap homebrew/cask-fonts
+		brew tap homebrew/cask-fonts || true
 		brew install --cask font-jetbrains-mono-nerd-font
 	else
-		local temp_dir=$(mktemp -d)
-		cd "$temp_dir"
-		curl -Lo JetBrainsMono.zip https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/JetBrainsMono.zip
+		local font_url="https://github.com/ryanoasis/nerd-fonts/releases/download/v2.1.0/JetBrainsMono.zip"
+		local td; td=$(mktemp -d); cd "$td"
+		curl -fsSL -o JetBrainsMono.zip "$font_url"
 		mkdir -p ~/.local/share/fonts
-		unzip JetBrainsMono.zip -d ~/.local/share/fonts/JetBrainsMono
+		unzip -q JetBrainsMono.zip -d ~/.local/share/fonts/JetBrainsMono
 		fc-cache -f -v
-		cd "$HOME"
-		rm -rf "$temp_dir"
+		cd "$HOME"; rm -rf "$td"
 	fi
 
 	echo "JetBrains Nerd Font установлен."
@@ -169,15 +222,11 @@ install_lazydocker() {
     if is_macos; then
         brew install lazydocker
     else
-        local temp_dir=$(mktemp -d)
-        cd "$temp_dir"
-        local os_name=$(uname -s | tr '[:upper:]' '[:lower:]')
-        local arch=$(uname -m)
-        curl -Lo lazydocker.tar.gz "https://github.com/jesseduffield/lazydocker/releases/latest/download/lazydocker_${os_name}_${arch}.tar.gz"
-        tar xf lazydocker.tar.gz
-        sudo mv lazydocker /usr/local/bin
-        cd "$HOME"
-        rm -rf "$temp_dir"
+        local os_name; os_name=$(uname -s | tr '[:upper:]' '[:lower:]')
+        local a; a=$(get_arch)
+        download_and_install \
+            "https://github.com/jesseduffield/lazydocker/releases/latest/download/lazydocker_${os_name}_${a}.tar.gz" \
+            tar.gz "lazydocker" "/usr/local/bin"
     fi
 
     echo "lazydocker установлен."
@@ -190,92 +239,17 @@ install_k9s() {
     if is_macos; then
         brew install k9s
     else
-        local temp_dir=$(mktemp -d)
-        cd "$temp_dir"
-        local arch=$(uname -m)
-        local k9s_arch="amd64"
-        case "$arch" in
-            x86_64) k9s_arch="amd64" ;;
-            aarch64) k9s_arch="arm64" ;;
-            arm64) k9s_arch="arm64" ;;
-        esac
-        curl -Lo k9s.tar.gz "https://github.com/derailed/k9s/releases/latest/download/k9s_Linux_${k9s_arch}.tar.gz"
-        tar xf k9s.tar.gz
-        sudo mv k9s /usr/local/bin
-        cd "$HOME"
-        rm -rf "$temp_dir"
+        local a; a=$(get_arch)
+        # k9s release uses k9s_Linux_{amd64,arm64}
+        download_and_install \
+            "https://github.com/derailed/k9s/releases/latest/download/k9s_Linux_${a}.tar.gz" \
+            tar.gz "k9s" "/usr/local/bin"
     fi
 
     echo "k9s установлен."
 }
 
 
-# Установка и настройка конфигураций
-dotfiles_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-setup_configs() {
-    echo "Настройка конфигурационных файлов..."
-
-    # Создаем директории
-    mkdir -p ~/.config
-
-    # Starship
-    if [ -f "$dotfiles_dir/configs/starship/starship.toml" ]; then
-        mkdir -p ~/.config
-        ln -sf "$dotfiles_dir/configs/starship/starship.toml" ~/.config/starship.toml
-        echo "Starship конфигурация установлена"
-    fi
-
-    # bat
-    if [ -f "$dotfiles_dir/configs/bat/config" ]; then
-        mkdir -p ~/.config/bat
-        ln -sf "$dotfiles_dir/configs/bat/config" ~/.config/bat/config
-        echo "bat конфигурация установлена"
-    fi
-
-    # btop
-    if [ -f "$dotfiles_dir/configs/btop/btop.conf" ]; then
-        mkdir -p ~/.config/btop
-        ln -sf "$dotfiles_dir/configs/btop/btop.conf" ~/.config/btop/btop.conf
-        echo "btop конфигурация установлена"
-    fi
-
-    # Git
-    if [ -f "$dotfiles_dir/configs/git/config" ]; then
-        mkdir -p ~/.config/git
-        ln -sf "$dotfiles_dir/configs/git/config" ~/.config/git/config
-        if ! grep -q "path = ~/.config/git/config" ~/.gitconfig 2>/dev/null; then
-            git config --global include.path ~/.config/git/config
-        fi
-        echo "Git конфигурация установлена"
-    fi
-
-    # Fish shell
-    if [ -f "$dotfiles_dir/configs/fish/config.fish" ]; then
-        mkdir -p ~/.config/fish
-        ln -sf "$dotfiles_dir/configs/fish/config.fish" ~/.config/fish/config.fish
-        echo "Fish shell конфигурация установлена"
-    fi
-
-    # Shell configs
-    if [ -f "$dotfiles_dir/shell/.zshrc" ]; then
-        ln -sf "$dotfiles_dir/shell/.zshrc" ~/.zshrc
-        echo ".zshrc установлен"
-    fi
-
-    if [ -f "$dotfiles_dir/shell/.bashrc" ]; then
-        if [ -f ~/.bashrc ]; then
-            if ! grep -q "dotfiles bashrc" ~/.bashrc; then
-                echo -e "\n# dotfiles bashrc\nsource \"$dotfiles_dir/shell/.bashrc\"" >> ~/.bashrc
-            fi
-        else
-            ln -sf "$dotfiles_dir/shell/.bashrc" ~/.bashrc
-        fi
-        echo ".bashrc настроен"
-    fi
-
-    echo "Конфигурации установлены!"
-}
 
 # CLI Utilities
 install_fzf() {
@@ -301,22 +275,10 @@ install_fzf() {
 install_ripgrep() {
     if ! command_exists rg; then
         echo "Установка ripgrep..."
-        if is_macos; then
-            brew install ripgrep
-        elif command_exists apt-get; then
-            sudo apt-get install -y ripgrep
-        elif command_exists yum; then
-            sudo yum install -y ripgrep
+        if is_macos || [ "$(get_pkg_manager)" != "unknown" ]; then
+            install_pkg ripgrep ripgrep ripgrep || true
         else
-            local arch=$(uname -m)
-            local rg_arch="amd64"
-            [ "$arch" = "aarch64" ] && rg_arch="arm64"
-            local temp_dir=$(mktemp -d)
-            cd "$temp_dir"
-            curl -Lo ripgrep.deb "https://github.com/BurntSushi/ripgrep/releases/latest/download/ripgrep_${rg_arch}.deb"
-            sudo dpkg -i ripgrep.deb || sudo apt-get install -f -y
-            cd "$HOME"
-            rm -rf "$temp_dir"
+            download_and_install "https://github.com/BurntSushi/ripgrep/releases/latest/download/ripgrep_$(get_arch).deb" deb rg /usr/local/bin
         fi
         echo "ripgrep установлен"
     else
@@ -329,22 +291,13 @@ install_fd() {
         echo "Установка fd..."
         if is_macos; then
             brew install fd
-        elif command_exists apt-get; then
-            sudo apt-get install -y fd-find
-            mkdir -p ~/.local/bin
-            ln -sf $(which fdfind) ~/.local/bin/fd 2>/dev/null || true
-        elif command_exists yum; then
-            sudo yum install -y fd-find
         else
-            local arch=$(uname -m)
-            local fd_arch="amd64"
-            [ "$arch" = "aarch64" ] && fd_arch="arm64"
-            local temp_dir=$(mktemp -d)
-            cd "$temp_dir"
-            curl -Lo fd.deb "https://github.com/sharkdp/fd/releases/latest/download/fd_${fd_arch}.deb"
-            sudo dpkg -i fd.deb || sudo apt-get install -f -y
-            cd "$HOME"
-            rm -rf "$temp_dir"
+            install_pkg fd fd-find fd-find || true
+            # symlink fdfind -> fd on debian style
+            if command_exists fdfind && ! command_exists fd; then
+                mkdir -p ~/.local/bin
+                ln -sf "$(which fdfind)" ~/.local/bin/fd 2>/dev/null || true
+            fi
         fi
         echo "fd установлен"
     else
@@ -357,22 +310,12 @@ install_bat() {
         echo "Установка bat..."
         if is_macos; then
             brew install bat
-        elif command_exists apt-get; then
-            sudo apt-get install -y bat
-            mkdir -p ~/.local/bin
-            ln -sf $(which batcat) ~/.local/bin/bat 2>/dev/null || true
-        elif command_exists yum; then
-            sudo yum install -y bat
         else
-            local arch=$(uname -m)
-            local bat_arch="amd64"
-            [ "$arch" = "aarch64" ] && bat_arch="arm64"
-            local temp_dir=$(mktemp -d)
-            cd "$temp_dir"
-            curl -Lo bat.deb "https://github.com/sharkdp/bat/releases/latest/download/bat_${bat_arch}.deb"
-            sudo dpkg -i bat.deb || sudo apt-get install -f -y
-            cd "$HOME"
-            rm -rf "$temp_dir"
+            install_pkg bat bat bat || true
+            if command_exists batcat && ! command_exists bat; then
+                mkdir -p ~/.local/bin
+                ln -sf "$(which batcat)" ~/.local/bin/bat 2>/dev/null || true
+            fi
         fi
         echo "bat установлен"
     else
@@ -385,22 +328,15 @@ install_eza() {
         echo "Установка eza..."
         if is_macos; then
             brew install eza
-        elif command_exists apt-get; then
+        elif [ "$(get_pkg_manager)" = "apt" ]; then
             sudo mkdir -p /etc/apt/keyrings
             curl -fsSL https://raw.githubusercontent.com/eza-community/eza/main/deb.asc | sudo gpg --dearmor -o /etc/apt/keyrings/gierens.gpg
             echo "deb [signed-by=/etc/apt/keyrings/gierens.gpg] http://deb.gierens.de stable main" | sudo tee /etc/apt/sources.list.d/gierens.list
             sudo chmod 644 /etc/apt/keyrings/gierens.gpg /etc/apt/sources.list.d/gierens.list
-            sudo apt-get update
+            sudo apt-get update -qq
             sudo apt-get install -y eza
         else
-            local arch=$(uname -m)
-            local temp_dir=$(mktemp -d)
-            cd "$temp_dir"
-            curl -Lo eza.zip "https://github.com/eza-community/eza/releases/latest/download/eza_${arch}.zip"
-            unzip eza.zip
-            sudo mv eza /usr/local/bin/
-            cd "$HOME"
-            rm -rf "$temp_dir"
+            download_and_install "https://github.com/eza-community/eza/releases/latest/download/eza_$(get_arch).zip" zip eza /usr/local/bin
         fi
         echo "eza установлен"
     else
@@ -428,20 +364,27 @@ install_tre() {
         if is_macos; then
             brew install tre-command
         else
-            local arch=$(uname -m)
-            local tre_arch="x86_64"
-            [ "$arch" = "aarch64" ] && tre_arch="aarch64"
-            local temp_dir=$(mktemp -d)
-            cd "$temp_dir"
-            curl -Lo tre.tgz "https://github.com/dduan/tre/releases/latest/download/tre-${tre_arch}-unknown-linux-gnu.tar.gz"
-            tar xzf tre.tgz
-            sudo mv tre /usr/local/bin/
-            cd "$HOME"
-            rm -rf "$temp_dir"
+            local a; a=$(get_arch)
+            local tre_arch="x86_64"; [ "$a" = "arm64" ] && tre_arch="aarch64"
+            download_and_install "https://github.com/dduan/tre/releases/latest/download/tre-${tre_arch}-unknown-linux-gnu.tar.gz" tar.gz tre /usr/local/bin
         fi
         echo "tre установлен"
     else
         echo "tre уже установлен"
+    fi
+}
+
+install_herdr() {
+    if ! command_exists herdr; then
+        echo "Установка herdr..."
+        if is_macos; then
+            brew install herdr
+        else
+            curl -fsSL https://herdr.dev/install.sh | sh
+        fi
+        echo "herdr установлен"
+    else
+        echo "herdr уже установлен"
     fi
 }
 
@@ -612,43 +555,9 @@ install_ncdu() {
     fi
 }
 
-install_cli_utilities() {
-    echo "Установка CLI утилит..."
-    install_fzf
-    install_ripgrep
-    install_fd
-    install_bat
-    install_eza
-    install_zoxide
-    install_tre
-    echo "CLI утилиты установлены"
-}
-
-install_dev_tools() {
-    echo "Установка инструментов разработки..."
-    install_gh
-    install_delta
-    install_docker
-    echo "Инструменты разработки установлены"
-}
-
-install_shell_tools() {
-    echo "Установка shell-инструментов..."
-    install_zsh
-    install_ohmyzsh
-    install_fish
-    install_starship
-    echo "Shell-инструменты установлены"
-}
-
-install_system_tools() {
-    echo "Установка системных утилит..."
-    install_btop
-    install_ncdu
-    echo "Системные утилиты установлены"
-}
 
 # Функция для получения выбора пользователя
+# Emits space-separated tokens (numbers or keywords). Parsing now safe (no substring bugs).
 get_selection() {
     local choice
     choice=$(
@@ -658,22 +567,24 @@ get_selection() {
             "3) JetBrains Nerd Font" \
             "4) lazydocker" \
             "5) k9s" \
-            "6) CLI утилиты (fzf, ripgrep, fd, bat, eza, zoxide, tre)" \
+            "6) CLI утилиты (fzf, ripgrep, fd, bat, eza, zoxide, tre, herdr)" \
             "7) Инструменты разработки (gh, delta, docker)" \
             "8) Shell-инструменты (zsh, oh-my-zsh, fish, starship)" \
             "9) Системные утилиты (btop, ncdu)" \
-            "10) Flatpak приложения" \
-            "11) Конфигурации dotfiles" \
+            "10) herdr" \
+            "11) Flatpak приложения" \
+            "12) Конфигурации dotfiles" \
             "99) Установить все" \
             "0) Выход"
     )
+    # Produce clean tokens: numbers or the keywords used in CLI
     echo "$choice" | awk -F')' '{print $1}' | tr '\n' ' ' | xargs
 }
 
 usage() {
     echo "Usage: $0 [options]"
     echo ""
-    echo "Supported OS: Linux (apt/yum) and macOS (Homebrew)"
+    echo "Supported OS: Linux (apt/yum/dnf) and macOS (Homebrew)"
     echo ""
     echo "Options:"
     echo "  --tmux          Install tmux and setup config"
@@ -681,10 +592,11 @@ usage() {
     echo "  --fonts         Install JetBrains Nerd Font"
     echo "  --lazydocker    Install lazydocker"
     echo "  --k9s           Install k9s"
-    echo "  --cli           Install CLI utilities (fzf, ripgrep, fd, bat, eza, zoxide, tre)"
+    echo "  --cli           Install CLI utilities (fzf, ripgrep, fd, bat, eza, zoxide, tre, herdr)"
     echo "  --dev           Install development tools (gh, delta, docker)"
     echo "  --shell         Install shell tools (zsh, oh-my-zsh, fish, starship)"
     echo "  --system        Install system tools (btop, ncdu)"
+    echo "  --herdr         Install herdr (agent multiplexer for AI coding agents)"
     echo "  --flatpak       Install flatpak applications (Linux only)"
     echo "  --configs       Setup dotfiles configurations"
     echo "  --all           Install everything"
@@ -697,75 +609,67 @@ usage() {
 
 run_installer() {
     local selection="$1"
+    local -a tokens=()
+    # Safe parse under set -u / nounset
+    IFS=' ' read -ra tokens <<< "$selection" 2>/dev/null || true
 
-    if [[ $selection == *"0"* ]]; then
-        echo "Выход из программы."
-        return 1
-    fi
-
-    if [[ $selection == *"99"* ]] || [[ "$selection" == "all" ]]; then
-        install_tmux
-        setup_tmux
-        install_neovim
-        setup_lazyvim
-        install_jetbrains_nerd_font
-        install_lazydocker
-        install_k9s
-        install_cli_utilities
-        install_dev_tools
-        install_shell_tools
-        install_system_tools
-        setup_flatpak_apps
-        setup_configs
-        echo "Все компоненты установлены."
-        return 0
-    fi
-
-    if [[ $selection == *"1"* ]] || [[ "$selection" == "tmux" ]]; then
-        install_tmux
-        setup_tmux
-    fi
-
-    if [[ $selection == *"2"* ]] || [[ "$selection" == "nvim" ]]; then
-        install_neovim
-        setup_lazyvim
-    fi
-
-    if [[ $selection == *"3"* ]] || [[ "$selection" == "fonts" ]]; then
-        install_jetbrains_nerd_font
-    fi
-
-    if [[ $selection == *"4"* ]] || [[ "$selection" == "lazydocker" ]]; then
-        install_lazydocker
-    fi
-
-    if [[ $selection == *"5"* ]] || [[ "$selection" == "k9s" ]]; then
-        install_k9s
-    fi
-
-    if [[ $selection == *"6"* ]] || [[ "$selection" == "cli" ]]; then
-        install_cli_utilities
-    fi
-
-    if [[ $selection == *"7"* ]] || [[ "$selection" == "dev" ]]; then
-        install_dev_tools
-    fi
-
-    if [[ $selection == *"8"* ]] || [[ "$selection" == "shell" ]]; then
-        install_shell_tools
-    fi
-
-    if [[ $selection == *"9"* ]] || [[ "$selection" == "system" ]]; then
-        install_system_tools
-    fi
-
-    if [[ $selection == *"10"* ]] || [[ "$selection" == "flatpak" ]]; then
-        setup_flatpak_apps
-    fi
-
-    if [[ $selection == *"11"* ]] || [[ "$selection" == "configs" ]]; then
-        setup_configs
-    fi
+    for tok in "${tokens[@]:-}"; do
+        case "$tok" in
+            0|exit)
+                echo "Выход из программы."
+                return 1
+                ;;
+            99|all)
+                install_all
+                return 0
+                ;;
+            1|tmux)
+                install_tmux
+                setup_tmux
+                ;;
+            2|nvim)
+                install_neovim
+                setup_lazyvim
+                ;;
+            3|fonts)
+                install_jetbrains_nerd_font
+                ;;
+            4|lazydocker)
+                install_lazydocker
+                ;;
+            5|k9s)
+                install_k9s
+                ;;
+            6|cli)
+                install_cli_utilities
+                ;;
+            7|dev)
+                install_dev_tools
+                ;;
+            8|shell)
+                install_shell_tools
+                ;;
+            9|system)
+                install_system_tools
+                ;;
+            10|herdr)
+                install_herdr
+                ;;
+            11|flatpak)
+                if is_linux; then
+                    setup_flatpak_apps
+                else
+                    echo "Flatpak is Linux-only. Skipping."
+                fi
+                ;;
+            12|configs)
+                setup_configs
+                ;;
+            *)
+                # ignore unknown tokens gracefully
+                ;;
+        esac
+    done
 
     echo "Установка выбранных компонентов завершена."
     return 0
@@ -773,6 +677,8 @@ run_installer() {
 
 # Основная функция
 main() {
+    local need_brew_check=0
+
     if [ $# -eq 0 ]; then
         if ! command_exists gum; then
             echo "gum не найден. Для неинтерактивного режима используйте аргументы:"
@@ -799,7 +705,7 @@ main() {
                 --brew)
                     install_homebrew
                     ;;
-                --tmux|--nvim|--fonts|--lazydocker|--k9s|--cli|--dev|--shell|--system|--flatpak|--configs|--all)
+                --tmux|--nvim|--fonts|--lazydocker|--k9s|--cli|--dev|--shell|--system|--flatpak|--configs|--herdr|--all)
                     if is_macos && ! command_exists brew; then
                         echo "Homebrew не найден. Установка..."
                         install_homebrew
@@ -822,5 +728,7 @@ main() {
     fi
 }
 
-# Запуск основной функции
-main "$@"
+# Run only when executed (not sourced for testing or reuse)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

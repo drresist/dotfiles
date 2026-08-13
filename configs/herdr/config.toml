@@ -1,0 +1,10 @@
+onboarding = false
+[theme]
+name = "terminal"
+
+auto_switch = false
+[ui.toast]
+delivery = "herdr"
+
+[ui]
+agent_panel_scope = "all"
