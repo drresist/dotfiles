@@ -1,0 +1,57 @@
+---
+# Точка входа для операций по хостам.
+#
+#   ./bin/ops audit                 # read-only проверка состояния (безопасно всегда)
+#   ./bin/ops backups               # развернуть/обновить restic-бэкапы + cron
+#   ./bin/ops verify                # проверка восстановлением на каждом хосте
+#   ./bin/ops rotate-s3             # сменить S3-ключи (нужен vault или extra-vars)
+#   ./bin/ops docker-firewall       # правила DOCKER-USER (по умолчанию dry-run)
+#   ./bin/ops cleanup               # удаление легаси (по умолчанию dry-run)
+#
+# Любой плейбук можно запустить и напрямую:
+#   ansible-playbook site.yml --tags audit --limit proxy
+
+- name: Audit host state (read-only)
+  hosts: all
+  gather_facts: true
+  tags: [audit]
+  roles:
+    - audit
+
+- name: Restic off-site backups (scripts, config, schedule)
+  hosts: backup_hosts
+  gather_facts: true
+  tags: [backups]
+  roles:
+    - restic_backup
+
+- name: Restore verification from the repositories
+  hosts: backup_hosts
+  gather_facts: true
+  tags: [verify]
+  tasks:
+    - name: Run restore verification
+      ansible.builtin.include_role:
+        name: restic_backup
+        tasks_from: verify.yml
+
+- name: Rotate S3 access keys
+  hosts: backup_hosts
+  gather_facts: true
+  tags: [rotate-s3]
+  roles:
+    - s3_keys
+
+- name: Docker port publishing firewall
+  hosts: vps
+  gather_facts: true
+  tags: [docker-firewall]
+  roles:
+    - docker_firewall
+
+- name: Cleanup leftovers
+  hosts: all
+  gather_facts: true
+  tags: [cleanup]
+  roles:
+    - cleanup

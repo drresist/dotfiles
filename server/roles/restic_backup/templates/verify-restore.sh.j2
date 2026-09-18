@@ -1,0 +1,102 @@
+#!/bin/bash
+# Управляется Ansible: dotfiles/server/roles/restic_backup.
+# Проверка не «на глаз»: restic check + реальное восстановление + проверки содержимого.
+#
+# Семантика сравнения с живыми данными (снапшот всегда старше):
+#   FAIL = путь есть и в снапшоте, и в live, но содержимое разошлось
+#   INFO = файл появился в live после снапшота (норма, попадёт в следующий бэкап)
+set -euo pipefail
+
+{% if restic_become %}
+export HOME=/root
+export XDG_CACHE_HOME=/root/.cache
+{% else %}
+export HOME="{{ ansible_env.HOME }}"
+export XDG_CACHE_HOME="{{ ansible_env.HOME }}/.cache"
+{% endif %}
+export PATH="{{ restic_bin | dirname }}:/usr/local/bin:/usr/bin:/bin"
+set -a; . "{{ restic_env_file }}"; set +a
+export RESTIC_PASSWORD_FILE="{{ restic_password_file }}"
+export RESTIC_REPOSITORY="$S3_REPOSITORY"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+log() { printf '%s %s\n' "$(date -Is)" "$*"; }
+fail=0
+
+restic unlock >/dev/null 2>&1 || true
+log "restic check"
+restic check --read-data-subset=25% 2>&1 | tail -2 | sed 's/^/  /'
+
+log "restoring latest snapshot"
+restic restore latest --target "$TMP" 2>&1 | tail -1 | sed 's/^/  /'
+R="$TMP{{ backup_dir }}/stage"
+
+{% for db in verify_sqlite %}
+if [ -s "$R/sqlite/{{ db }}" ]; then
+  res="$(python3 -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('PRAGMA integrity_check;').fetchone()[0])" "$R/sqlite/{{ db }}")"
+  log "  integrity {{ db }}: $res"
+  [ "$res" = "ok" ] || fail=1
+else
+  log "  MISSING in snapshot: {{ db }}"
+  fail=1
+fi
+{% endfor %}
+
+{% if verify_archive_paths %}
+TAR="$R/trees/{{ backup_tar_name | default('configs.tar') }}"
+if [ -s "$TAR" ]; then
+  entries="$(tar -tf "$TAR" 2>/dev/null)"
+  for p in{% for p in verify_archive_paths %} "{{ p }}"{% endfor %}; do
+    if printf '%s\n' "$entries" | grep -q "^$p"; then
+      log "  present: $p"
+    else
+      log "  MISSING in archive: $p"
+      fail=1
+    fi
+  done
+  log "  archive entries: $(printf '%s\n' "$entries" | wc -l)"
+else
+  log "  MISSING archive: trees/{{ backup_tar_name | default('configs.tar') }}"
+  fail=1
+fi
+{% endif %}
+
+{% for t in verify_trees %}
+{% set src = (backup_trees | selectattr('name', 'equalto', t) | first).src %}
+# дерево {{ t }}: {{ src }}
+if ! python3 - "$R/{{ t }}" "{{ src }}" <<'PY'
+import hashlib, os, sys
+
+rest_root, live_root = sys.argv[1], sys.argv[2]
+
+
+def tree(root):
+    out = {}
+    for dirpath, _, files in os.walk(root):
+        for name in files:
+            if name.endswith(".md"):
+                path = os.path.join(dirpath, name)
+                with open(path, "rb") as handle:
+                    out[os.path.relpath(path, root)] = hashlib.sha256(handle.read()).hexdigest()
+    return out
+
+
+restored, live = tree(rest_root), tree(live_root)
+mismatch = sorted(k for k, v in restored.items() if k in live and live[k] != v)
+newer = sorted(k for k in live if k not in restored)
+print(f"  {{ t }}: restored={len(restored)} live={len(live)} mismatched={len(mismatch)} newer_than_snapshot={len(newer)}")
+for key in mismatch[:10]:
+    print("  MISMATCH:", key)
+for key in newer[:5]:
+    print("  newer than snapshot (ok):", key)
+sys.exit(1 if mismatch else 0)
+PY
+then
+  log "  CONTENT MISMATCH in {{ t }}"
+  fail=1
+fi
+{% endfor %}
+
+log "RESULT: $([ $fail -eq 0 ] && echo OK || echo FAILED)"
+exit $fail

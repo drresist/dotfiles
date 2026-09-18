@@ -1,0 +1,176 @@
+---
+# Разворачивает restic-бэкап на хосте: бинарник, env с ключами, пароль репозитория,
+# скрипты backup/verify и cron. Идемпотентно: повторный прогон ничего не меняет.
+
+- name: Check installed restic
+  ansible.builtin.command: "{{ restic_bin }} version"
+  register: restic_installed
+  changed_when: false
+  failed_when: false
+  become: "{{ restic_become }}"
+  check_mode: false
+
+- name: Decide whether restic must be installed
+  ansible.builtin.set_fact:
+    restic_needs_install: "{{ (restic_installed.rc | default(1)) != 0 or restic_version not in (restic_installed.stdout | default('')) }}"
+
+- name: Report pending restic installation (check mode)
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: restic {{ restic_version }} отсутствует — будет установлен"
+  when:
+    - restic_needs_install
+    - ansible_check_mode
+
+- name: Install restic (download + decompress + install)
+  when:
+    - restic_needs_install
+    - not ansible_check_mode
+  block:
+    - name: Download restic archive
+      ansible.builtin.get_url:
+        url: "https://github.com/restic/restic/releases/download/v{{ restic_version }}/restic_{{ restic_version }}_{{ restic_arch }}.bz2"
+        dest: "/tmp/restic_{{ restic_version }}.bz2"
+        mode: "0644"
+
+    - name: Decompress restic archive
+      ansible.builtin.command:
+        cmd: >-
+          python3 -c "import bz2,shutil;s=bz2.open('/tmp/restic_{{ restic_version }}.bz2','rb');
+          d=open('/tmp/restic_{{ restic_version }}','wb');shutil.copyfileobj(s,d);s.close();d.close()"
+        creates: "/tmp/restic_{{ restic_version }}"
+
+    - name: Install restic binary
+      ansible.builtin.copy:
+        src: "/tmp/restic_{{ restic_version }}"
+        dest: "{{ restic_bin }}"
+        mode: "0755"
+        remote_src: true
+      become: "{{ restic_become }}"
+
+    - name: Remove temporary files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/restic_{{ restic_version }}.bz2"
+        - "/tmp/restic_{{ restic_version }}"
+
+- name: Ensure directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - "{{ backup_dir }}"
+    - "{{ restic_password_file | dirname }}"
+  become: "{{ restic_become }}"
+
+- name: Check whether config files are already present
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ restic_password_file }}"
+    - "{{ restic_env_file }}"
+  register: restic_config_stat
+  become: "{{ restic_become }}"
+
+- name: Install restic repository password
+  ansible.builtin.copy:
+    content: "{{ restic_password }}\n"
+    dest: "{{ restic_password_file }}"
+    mode: "0600"
+    force: false
+  become: "{{ restic_become }}"
+  no_log: true
+  when: restic_password | length > 0
+
+- name: Install S3 credentials file
+  ansible.builtin.template:
+    src: restic.env.j2
+    dest: "{{ restic_env_file }}"
+    mode: "0600"
+  become: "{{ restic_become }}"
+  no_log: true
+  when: s3_access_key_id | length > 0 and s3_secret_access_key | length > 0
+
+- name: Report missing configuration
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: нет {{ restic_env_file }} и не переданы s3_access_key_id /
+      s3_secret_access_key. Передай их через vault или --extra-vars.
+  when:
+    - not (restic_config_stat.results | selectattr('item', 'equalto', restic_env_file) | map(attribute='stat.exists') | first | default(false))
+    - s3_access_key_id | length == 0 or s3_secret_access_key | length == 0
+
+- name: Report missing repository password
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: пароль restic не задан и файла {{ restic_password_file }} нет —
+      бэкап упадёт. Передай restic_password через vault.
+  when:
+    - restic_password | length == 0
+    - not (restic_config_stat.results | selectattr('item', 'equalto', restic_password_file) | map(attribute='stat.exists') | first | default(false))
+
+- name: Render backup script
+  ansible.builtin.template:
+    src: backup.sh.j2
+    dest: "{{ backup_dir }}/backup.sh"
+    mode: "0700"
+  become: "{{ restic_become }}"
+
+- name: Render verification script
+  ansible.builtin.template:
+    src: verify-restore.sh.j2
+    dest: "{{ backup_dir }}/verify-restore.sh"
+    mode: "0700"
+  become: "{{ restic_become }}"
+
+- name: Install daily backup cron entry
+  ansible.builtin.cron:
+    name: "restic backup ({{ restic_host_label }})"
+    minute: "{{ cron_daily.split()[0] }}"
+    hour: "{{ cron_daily.split()[1] }}"
+    day: "{{ cron_daily.split()[2] }}"
+    month: "{{ cron_daily.split()[3] }}"
+    weekday: "{{ cron_daily.split()[4] }}"
+    job: "{{ backup_dir }}/backup.sh >> {{ backup_dir }}/backup.log 2>&1"
+    user: "{{ 'root' if restic_become else ansible_user }}"
+  become: "{{ restic_become }}"
+
+- name: Install weekly verification cron entry
+  ansible.builtin.cron:
+    name: "restic verify ({{ restic_host_label }})"
+    minute: "{{ cron_weekly.split()[0] }}"
+    hour: "{{ cron_weekly.split()[1] }}"
+    day: "{{ cron_weekly.split()[2] }}"
+    month: "{{ cron_weekly.split()[3] }}"
+    weekday: "{{ cron_weekly.split()[4] }}"
+    job: "{{ backup_dir }}/verify-restore.sh >> {{ backup_dir }}/verify.log 2>&1"
+    user: "{{ 'root' if restic_become else ansible_user }}"
+  become: "{{ restic_become }}"
+
+- name: Initialize repository when missing
+  ansible.builtin.shell: |
+    set -eu
+    . "{{ restic_env_file }}"
+    export RESTIC_PASSWORD_FILE="{{ restic_password_file }}"
+    if "{{ restic_bin }}" -r "$S3_REPOSITORY" snapshots --no-lock >/dev/null 2>&1; then
+      echo "exists"
+    else
+      "{{ restic_bin }}" -r "$S3_REPOSITORY" init
+    fi
+  become: "{{ restic_become }}"
+  register: restic_init
+  changed_when: "'created restic repository' in restic_init.stdout"
+  when:
+    - (restic_config_stat.results | selectattr('item', 'equalto', restic_env_file) | map(attribute='stat.exists') | first | default(false))
+    - (restic_config_stat.results | selectattr('item', 'equalto', restic_password_file) | map(attribute='stat.exists') | first | default(false))
+      or restic_password | length > 0
+
+- name: Report backup target
+  ansible.builtin.debug:
+    msg:
+      - "host: {{ inventory_hostname }}"
+      - "repo: {{ restic_repo }}"
+      - "config dir: {{ backup_dir }}"
+      - "schedule: daily '{{ cron_daily }}' / weekly '{{ cron_weekly }}'"

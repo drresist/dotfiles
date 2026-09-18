@@ -1,0 +1,190 @@
+---
+# Read-only аудит хоста: собирает факты, ничего не меняет.
+# Дрейф от инвентаризации фиксируется как FINDING; audit_fail_on_drift=true — падать.
+# Отчёт складывается на управляющей машине в {{ report_dir }}/<host>.txt
+
+- name: Collect listening TCP sockets
+  ansible.builtin.command: ss -ltnH
+  register: audit_ss_tcp
+  changed_when: false
+  failed_when: false
+
+- name: Collect listening UDP sockets
+  ansible.builtin.command: ss -lunH
+  register: audit_ss_udp
+  changed_when: false
+  failed_when: false
+
+- name: Collect docker containers (json)
+  ansible.builtin.command: docker ps -a --format json
+  register: audit_docker_raw
+  changed_when: false
+  failed_when: false
+
+- name: Check fail2ban binary
+  ansible.builtin.stat:
+    path: /usr/bin/fail2ban-client
+  register: audit_fail2ban
+
+- name: Read crontab of the account that runs the backups
+  ansible.builtin.command: crontab -l
+  become: "{{ restic_become | default(false) }}"
+  register: audit_crontab
+  changed_when: false
+  failed_when: false
+  when: backup_enabled | default(false)
+
+- name: Check docker DOCKER-USER chain
+  ansible.builtin.command: iptables -S DOCKER-USER
+  become: true
+  register: audit_docker_user
+  changed_when: false
+  failed_when: false
+  when: audit_expect_docker_user_rules | default(false)
+
+- name: Stat files that hold secrets
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ audit_secret_files | default([]) }}"
+  become: "{{ restic_become | default(false) }}"
+  register: audit_secret_stats
+  failed_when: false
+
+- name: Read local accounts
+  ansible.builtin.getent:
+    database: passwd
+  failed_when: false
+
+- name: Measure age of the latest restic snapshot
+  ansible.builtin.shell: |
+    set -eu
+    . "{{ restic_env_file }}"
+    export RESTIC_PASSWORD_FILE="{{ restic_password_file }}"
+    "{{ restic_bin }}" -r "$S3_REPOSITORY" snapshots --latest 1 --json | python3 -c "
+    import json,sys,datetime
+    data=json.load(sys.stdin)
+    if not data:
+        print('none'); raise SystemExit
+    t=datetime.datetime.fromisoformat(data[0]['time'])
+    print(int((datetime.datetime.now(tz=t.tzinfo)-t).total_seconds()//3600))"
+  become: "{{ restic_become | default(false) }}"
+  register: audit_snapshot
+  changed_when: false
+  failed_when: false
+  when: backup_enabled | default(false)
+
+# --- вычисления ---
+- name: Extract wildcard-bound TCP ports
+  ansible.builtin.set_fact:
+    audit_tcp_ports: >-
+      {{ audit_ss_tcp.stdout_lines
+         | map('regex_replace', '^\s*\S+\s+\d+\s+\d+\s+(\S+)\s+.*$', '\1')
+         | select('match', '^(0\.0\.0\.0|\*|\[::\]):')
+         | map('regex_replace', '^.*:(\d+)$', '\1')
+         | map('int') | unique | sort }}
+
+- name: Extract wildcard-bound UDP ports
+  ansible.builtin.set_fact:
+    audit_udp_ports: >-
+      {{ audit_ss_udp.stdout_lines
+         | map('regex_replace', '^\s*\S+\s+\d+\s+\d+\s+(\S+)\s+.*$', '\1')
+         | select('match', '^(0\.0\.0\.0|\*|\[::\]):')
+         | map('regex_replace', '^.*:(\d+)$', '\1')
+         | map('int') | unique | sort }}
+
+- name: Compute port drift
+  ansible.builtin.set_fact:
+    audit_unexpected_tcp: "{{ audit_tcp_ports | difference(audit_allowed_public_tcp) }}"
+    audit_unexpected_udp: "{{ audit_udp_ports | difference(audit_allowed_public_udp) }}"
+
+- name: Parse docker containers
+  ansible.builtin.set_fact:
+    audit_containers: >-
+      {{ (audit_docker_raw.stdout_lines | default([]) | map('from_json') | list)
+         if (audit_docker_raw.rc | default(1)) == 0 else [] }}
+
+- name: Find containers that are neither running nor intentionally stopped
+  ansible.builtin.set_fact:
+    audit_bad_containers: >-
+      {{ audit_containers
+         | rejectattr('State', 'equalto', 'running')
+         | map(attribute='Names')
+         | difference(expected_stopped_containers | default([]))
+         | list }}
+
+- name: Find secret files that are not 0600
+  ansible.builtin.set_fact:
+    audit_loose_secrets: >-
+      {{ audit_secret_stats.results | default([])
+         | selectattr('stat.exists', 'defined')
+         | selectattr('stat.exists')
+         | selectattr('stat.mode', 'defined')
+         | selectattr('stat.mode', 'ne', '0600')
+         | map(attribute='item') | list }}
+
+- name: Find leftover accounts
+  ansible.builtin.set_fact:
+    audit_leftover_users: >-
+      {{ audit_forbidden_users
+         | select('in', ansible_facts.getent_passwd.keys() | list)
+         | list }}
+
+# --- сборка отчёта ---
+- name: Build findings list
+  ansible.builtin.set_fact:
+    audit_findings: >-
+      {{ []
+         + (['публично слушают неожиданные TCP-порты: ' ~ (audit_unexpected_tcp | join(', '))]
+            if audit_unexpected_tcp | length > 0 else [])
+         + (['публично слушают неожиданные UDP-порты: ' ~ (audit_unexpected_udp | join(', '))]
+            if audit_unexpected_udp | length > 0 else [])
+         + (['контейнеры не в running и не помечены как остановленные намеренно: ' ~ (audit_bad_containers | join(', '))]
+            if audit_bad_containers | length > 0 else [])
+         + (['fail2ban не установлен']
+            if (audit_expect_fail2ban | default(false)) and not audit_fail2ban.stat.exists else [])
+         + (['цепочка DOCKER-USER пуста — публикация портов docker ничем не ограничена']
+            if (audit_expect_docker_user_rules | default(false)) and (audit_docker_user.stdout_lines | default([]) | length) <= 1 else [])
+         + (['файлы с секретами не 0600: ' ~ (audit_loose_secrets | join(', '))]
+            if audit_loose_secrets | length > 0 else [])
+         + (['присутствуют учётные записи-наследники: ' ~ (audit_leftover_users | join(', '))]
+            if audit_leftover_users | length > 0 else [])
+         + (['нет ни одного снапшота restic']
+            if (backup_enabled | default(false)) and (audit_snapshot.stdout | default('')) == 'none' else [])
+         + (['последний бэкап старше ' ~ audit_backup_max_age_hours ~ 'ч (' ~ audit_snapshot.stdout ~ 'ч)']
+            if (backup_enabled | default(false)) and (audit_snapshot.stdout | default('9999')) not in ['none', '']
+               and (audit_snapshot.stdout | int) > (audit_backup_max_age_hours | int) else [])
+         + (['restic не смог опросить репозиторий: ' ~ (audit_snapshot.stderr | default('') | trim)]
+            if (backup_enabled | default(false)) and (audit_snapshot.rc | default(0)) != 0 else [])
+         + (['в crontab нет задачи бэкапа']
+            if (backup_enabled | default(false)) and ('backup.sh' not in (audit_crontab.stdout | default(''))) else [])
+      }}
+
+- name: Build report lines
+  ansible.builtin.set_fact:
+    audit_report: >-
+      {{ ['HOST: ' ~ inventory_hostname ~ '  role: ' ~ (server_role | default('unknown'))
+              ~ '  kernel: ' ~ (ansible_facts.kernel | default('?'))
+              ~ '  uptime: ' ~ ((ansible_facts.uptime_seconds | default(0) / 3600) | round(1) | string) ~ 'h']
+         + (['public tcp: ' ~ (audit_tcp_ports | join(', '))] if audit_tcp_ports | length > 0 else ['public tcp: none'])
+         + (['public udp: ' ~ (audit_udp_ports | join(', '))] if audit_udp_ports | length > 0 else ['public udp: none'])
+         + ['restic: ' ~ (audit_snapshot.stdout | default('n/a')) ~ 'h ago' if (backup_enabled | default(false)) else 'restic: not configured']
+         + (['FINDINGS:'] + (audit_findings | map('regex_replace', '^', '  - ') | list) if audit_findings | length > 0 else ['FINDINGS: none']) }}
+
+- name: Write report to the control node
+  ansible.builtin.copy:
+    content: "{{ audit_report | join('\n') }}\n"
+    dest: "{{ report_dir | default('./reports') }}/{{ inventory_hostname }}.txt"
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+
+- name: Show report
+  ansible.builtin.debug:
+    msg: "{{ audit_report }}"
+
+- name: Fail when drift detected
+  ansible.builtin.fail:
+    msg: "Аудит {{ inventory_hostname }}: {{ audit_findings | join('; ') }}"
+  when:
+    - audit_fail_on_drift | default(false)
+    - audit_findings | length > 0

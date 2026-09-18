@@ -1,0 +1,84 @@
+---
+# Публикация портов docker обходит input-цепочку хоста (DNAT -> FORWARD),
+# поэтому политика host_firewall на docker-порты не действует.
+# Эта роль закрывает дыру: в DOCKER-USER разрешается только явный список портов,
+# а всё остальное, что приходит с внешнего интерфейса, дропается.
+#
+# Роль НЕ применяется по умолчанию: docker_firewall_apply=false.
+# Сначала смотри ./bin/ops docker-firewall --check, потом включай.
+#
+# Замечание: внутренний трафик контейнеров (docker0/br-*, veth) здесь не затрагивается,
+# потому что правила привязаны к входному интерфейсу аплинка. Ошибка в списке портов
+# отрежет внешних клиентов VPN — откат: iptables -F DOCKER-USER.
+
+- name: Check iptables availability
+  ansible.builtin.command: iptables --version
+  changed_when: false
+  register: docker_firewall_iptables
+
+- name: Determine uplink interface
+  ansible.builtin.set_fact:
+    docker_firewall_uplink: "{{ ansible_default_ipv4.interface }}"
+
+- name: Show planned rules
+  ansible.builtin.debug:
+    msg:
+      - "host: {{ inventory_hostname }} (uplink {{ docker_firewall_uplink }})"
+      - "apply: {{ docker_firewall_apply }}"
+      - "allow tcp: {{ docker_firewall_allow_tcp | join(', ') }}"
+      - "allow udp: {{ docker_firewall_allow_udp | join(', ') }}"
+      - "остальное с {{ docker_firewall_uplink }} будет DROP"
+
+- name: Apply rule set (only when docker_firewall_apply=true)
+  when: docker_firewall_apply | bool
+  block:
+    - name: Flush DOCKER-USER chain
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        flush: true
+      become: true
+
+    - name: Allow return traffic for established connections
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        in_interface: "{{ docker_firewall_uplink }}"
+        ctstate: [ESTABLISHED, RELATED]
+        jump: RETURN
+      become: true
+
+    - name: Allow whitelisted TCP ports
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        in_interface: "{{ docker_firewall_uplink }}"
+        protocol: tcp
+        destination_port: "{{ item }}"
+        jump: RETURN
+      loop: "{{ docker_firewall_allow_tcp }}"
+      become: true
+
+    - name: Allow whitelisted UDP ports
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        in_interface: "{{ docker_firewall_uplink }}"
+        protocol: udp
+        destination_port: "{{ item }}"
+        jump: RETURN
+      loop: "{{ docker_firewall_allow_udp }}"
+      become: true
+
+    - name: Drop everything else coming from the uplink
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        in_interface: "{{ docker_firewall_uplink }}"
+        jump: DROP
+      become: true
+
+    - name: Show resulting chain
+      ansible.builtin.command: iptables -S DOCKER-USER
+      changed_when: false
+      register: docker_firewall_result
+      become: true
+
+    - name: Result
+      ansible.builtin.debug:
+        msg: "{{ docker_firewall_result.stdout_lines }}"

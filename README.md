@@ -98,6 +98,8 @@ Shell rcs source it via `~/.dotfiles/...` (or set `DOTFILES`).
 - `common.sh` — Shared functions (setup_configs delegates to install.sh, download helper, group installers, etc.)
 - `configs/` — Configuration files symlinked by the scripts
 - `shell/` — Shell rc files
+- `server/` — Ansible set for host operations (audit, off-site backups, key
+  rotation, docker firewall, cleanup); see `server/README.md`
 - `CHANGELOG.md` — history of config changes
 
 ## Notes

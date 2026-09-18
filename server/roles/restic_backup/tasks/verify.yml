@@ -1,0 +1,20 @@
+---
+# Прогон проверки восстановления на хосте (используется тегом verify).
+
+- name: Run restore verification
+  ansible.builtin.command: "{{ backup_dir }}/verify-restore.sh"
+  become: "{{ restic_become }}"
+  register: restic_verify_run
+  changed_when: false
+  failed_when: false
+
+- name: Show verification output
+  ansible.builtin.debug:
+    msg: "{{ restic_verify_run.stdout_lines }}"
+
+- name: Fail when verification did not pass
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: проверка восстановления не прошла
+      (см. {{ backup_dir }}/verify.log и вывод выше)
+  when: "'RESULT: OK' not in (restic_verify_run.stdout | default(''))"

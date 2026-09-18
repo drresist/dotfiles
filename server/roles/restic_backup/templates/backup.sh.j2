@@ -1,0 +1,84 @@
+#!/bin/bash
+# Управляется Ansible: dotfiles/server/roles/restic_backup.
+# Ручные правки затрутся при следующем прогоне ./bin/ops backups.
+set -euo pipefail
+
+{% if restic_become %}
+export HOME=/root
+export XDG_CACHE_HOME=/root/.cache
+{% else %}
+export HOME="{{ ansible_env.HOME }}"
+export XDG_CACHE_HOME="{{ ansible_env.HOME }}/.cache"
+{% endif %}
+export PATH="{{ restic_bin | dirname }}:/usr/local/bin:/usr/bin:/bin"
+set -a; . "{{ restic_env_file }}"; set +a
+export RESTIC_PASSWORD_FILE="{{ restic_password_file }}"
+export RESTIC_REPOSITORY="$S3_REPOSITORY"
+
+STAGE="{{ backup_dir }}/stage"
+log() { printf '%s %s\n' "$(date -Is)" "$*"; }
+
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+
+{% if backup_trees %}
+# деревья файлов (копируются как есть, с сохранением структуры)
+{% for d in backup_trees %}
+mkdir -p "$STAGE/{{ d.name }}"
+tar -C "{{ d.src }}" -cf - . | tar -C "$STAGE/{{ d.name }}" -xf -
+{% endfor %}
+{% endif %}
+
+{% if backup_sqlite %}
+# консистентные снапшоты SQLite (WAL-safe, живая база не останавливается)
+mkdir -p "$STAGE/sqlite"
+python3 - "$STAGE" <<'PY'
+import os, sqlite3, sys
+
+stage = sys.argv[1]
+targets = [
+{% for db in backup_sqlite %}
+    ("{{ db.src }}", os.path.join(stage, "sqlite", "{{ db.name }}")),
+{% endfor %}
+]
+for src, dst in targets:
+    if not os.path.exists(src):
+        print(f"skip (absent): {src}")
+        continue
+    con = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+    out = sqlite3.connect(dst)
+    with out:
+        con.backup(out)
+    out.close()
+    con.close()
+    print(f"snapshot: {src} -> {os.path.basename(dst)} ({os.path.getsize(dst)}B)")
+PY
+{% endif %}
+
+{% if backup_tar_paths %}
+# архивы конфигов и ключей (нужен root: прав нет у обычного пользователя)
+mkdir -p "$STAGE/trees"
+tar -C / -cf "$STAGE/trees/{{ backup_tar_name | default('configs.tar') }}" \
+{% for ex in backup_tar_exclude %}
+    --exclude='{{ ex }}' \
+{% endfor %}
+{% for p in backup_tar_paths %}
+    "{{ p }}" \
+{% endfor %}
+    2>/dev/null || true
+{% endif %}
+
+{% for m in backup_misc %}
+# {{ m.name }}
+tar -C "{{ m.src }}" -czf "$STAGE/{{ m.name }}" \
+{% for ex in m.exclude | default([]) %}
+    --exclude='{{ ex }}' \
+{% endfor %}
+    .
+{% endfor %}
+
+log "staged $(du -sh "$STAGE" | cut -f1)"
+restic backup --host {{ restic_host_label }} --tag auto "$STAGE" 2>&1 | tail -4
+restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune 2>&1 | tail -2
+log "snapshot: $(restic snapshots --latest 1 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["short_id"], d[0]["time"])')"
+rm -rf "$STAGE"

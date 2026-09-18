@@ -1,0 +1,47 @@
+---
+server_role: "vps-services"
+
+# --- restic backup ---
+backup_enabled: true
+restic_become: false
+restic_bin: "{{ ansible_env.HOME }}/.local/bin/restic"
+restic_env_file: "{{ ansible_env.HOME }}/backups/s3.env"
+restic_password_file: "{{ ansible_env.HOME }}/.config/restic/password"
+backup_dir: "{{ ansible_env.HOME }}/backups"
+restic_repo_prefix: "cloudcode-restic"
+restic_host_label: "cloudcode"
+cron_daily: "30 3 * * *"
+cron_weekly: "45 4 * * 0"
+
+# Что попадает в снапшот.
+backup_sqlite:
+  - { src: "/DATA/AppData/n8n/database.sqlite", name: "n8n-database.sqlite" }
+  - { src: "/home/mfesenko/proxy-monitoring/data/gatus.db", name: "gatus.db" }
+backup_trees:
+  - { src: "/opt/agent-memory/knowledge", name: "knowledge" }
+backup_tar_paths: []
+backup_tar_exclude: []
+backup_misc:
+  - src: "/DATA/AppData/n8n"
+    name: "n8n-appdata.tgz"
+    exclude: ["./database.sqlite", "./database.sqlite-wal", "./database.sqlite-shm"]
+
+verify_sqlite: ["n8n-database.sqlite", "gatus.db"]
+verify_trees: ["knowledge"]
+verify_archive_paths: []
+
+# --- аудит ---
+audit_expect_fail2ban: true
+audit_expect_docker_user_rules: false
+audit_allowed_public_tcp: [22]
+audit_allowed_public_udp: [41641]
+# Остановленные контейнеры, которые не считаются проблемой.
+expected_stopped_containers: ["beszel"]
+
+audit_secret_files: []
+
+# Уборка: мёртвый paused-контейнер, порт которого висел на 0.0.0.0.
+cleanup_paths: []
+cleanup_containers: ["beszel"]
+cleanup_units: []
+cleanup_users: []

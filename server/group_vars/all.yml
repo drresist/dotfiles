@@ -1,0 +1,43 @@
+---
+# Общие (не секретные) настройки операций по хостам.
+#
+# СЕКРЕТЫ ЗДЕСЬ НЕ ХРАНЯТСЯ. Репозиторий публичный.
+# Заводи group_vars/vault.yml из vault.yml.example и шифруй ansible-vault'ом,
+# либо передавай значения через --extra-vars.
+
+restic_version: "0.19.1"
+restic_arch: "linux_amd64"
+
+s3_endpoint: "https://s3.cloud.ru"
+s3_region: "ru-central-1"
+s3_bucket: "bucket-f72145"
+
+# Адрес репозитория собирается из общего бакета и префикса хоста (restic_repo_prefix в host_vars).
+restic_repo: "s3:{{ s3_endpoint }}/{{ s3_bucket }}/{{ restic_repo_prefix }}"
+
+# Заполняются vault'ом / extra-vars. Пустое значение = "не трогать то, что уже на хосте".
+s3_access_key_id: ""
+s3_secret_access_key: ""
+restic_password: ""
+
+# --- аудит ---
+report_dir: "./reports"
+audit_fail_on_drift: false
+audit_backup_max_age_hours: 36
+# Порты, которые считаются намеренно публичными (по умолчанию — только SSH).
+audit_allowed_public_tcp: [22]
+audit_allowed_public_udp: []
+# Учётные записи-наследники, которых на хостах быть не должно.
+audit_forbidden_users:
+  - alarm
+  - hiddify-panel
+  - hiddify-cli
+  - nginx
+  - dnstt
+  - liberty-bridge
+
+# --- прочее ---
+# Применение рискованных изменений (firewall, удаление) по умолчанию выключено:
+# сначала смотрим --check, потом включаем осознанно.
+docker_firewall_apply: false
+cleanup_apply: false

@@ -1,0 +1,18 @@
+---
+server_role: "workstation"
+backup_enabled: false
+restic_arch: "linux_arm64"
+audit_expect_fail2ban: false
+audit_allowed_public_tcp: [22, 22000]
+# 41641 — tailscale; 5353/21027/22000 — syncthing и mDNS;
+# 40699/41041 — эфемерные QUIC-порты syncthing (наружу закрыты ufw INPUT DROP).
+audit_allowed_public_udp: [41641, 5353, 21027, 22000, 40699, 41041]
+audit_secret_files:
+  - "/home/mfesenko/.config/snx-rs/snx-rs.conf"
+
+# Уборка: только явно безопасное (устаревший кэш сборки Go при отсутствующем тулчейне).
+cleanup_paths:
+  - "/home/mfesenko/.cache/go-build"
+cleanup_containers: []
+cleanup_units: []
+cleanup_users: []

@@ -1,2 +1,7 @@
 *.bak.*
 .DS_Store
+
+# server/: отчёты аудита и локальные секреты не коммитим
+server/reports/
+server/group_vars/vault.yml
+server/*.retry

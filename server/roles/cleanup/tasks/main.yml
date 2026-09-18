@@ -1,0 +1,63 @@
+---
+# Удаление легаси: мусорные каталоги, мёртвые контейнеры, висячие юниты, аккаунты-наследники.
+#
+# По умолчанию НИЧЕГО не удаляется: cleanup_apply=false.
+# При запуске всегда показывается, что было бы удалено (в т.ч. в режиме --check).
+
+- name: Collect existing cleanup targets
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ cleanup_paths | default([]) }}"
+  register: cleanup_path_stats
+  become: "{{ restic_become | default(false) }}"
+
+- name: Show what would be removed
+  ansible.builtin.debug:
+    msg:
+      - "apply: {{ cleanup_apply }} (check mode: {{ ansible_check_mode }})"
+      - "paths: {{ cleanup_path_stats.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+      - "containers: {{ cleanup_containers | default([]) }}"
+      - "units: {{ cleanup_units | default([]) }}"
+      - "users: {{ cleanup_users | default([]) }}"
+
+- name: Remove leftovers (only when cleanup_apply=true)
+  when:
+    - cleanup_apply | bool
+    - not ansible_check_mode
+  block:
+    - name: Remove leftover directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ cleanup_path_stats.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+      become: "{{ restic_become | default(false) }}"
+
+    - name: Remove dead containers
+      ansible.builtin.command: "docker rm -f {{ item }}"
+      loop: "{{ cleanup_containers | default([]) }}"
+      register: cleanup_container_rm
+      changed_when: "'Removed' in (cleanup_container_rm.stdout | default('')) or cleanup_container_rm.rc == 0"
+      failed_when: false
+
+    - name: Disable and stop obsolete units
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+        masked: false
+      loop: "{{ cleanup_units | default([]) }}"
+      become: true
+      failed_when: false
+
+    - name: Remove leftover accounts
+      ansible.builtin.user:
+        name: "{{ item }}"
+        state: absent
+        remove: true
+      loop: "{{ cleanup_users | default([]) }}"
+      become: true
+      failed_when: false
+
+    - name: Removed
+      ansible.builtin.debug:
+        msg: "cleanup выполнен на {{ inventory_hostname }}"

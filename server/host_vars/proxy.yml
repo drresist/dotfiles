@@ -1,0 +1,77 @@
+---
+server_role: "vpn-gateway"
+
+# --- restic backup (root-owned: часть данных читается только рутом) ---
+backup_enabled: true
+restic_become: true
+restic_bin: "/usr/local/bin/restic"
+restic_env_file: "/root/backups/s3.env"
+restic_password_file: "/root/backups/restic-password"
+backup_dir: "/root/backups"
+restic_repo_prefix: "proxy-host-restic"
+restic_host_label: "proxy"
+cron_daily: "30 3 * * *"
+cron_weekly: "45 4 * * 0"
+
+backup_sqlite:
+  - { src: "/etc/x-ui/x-ui.db", name: "x-ui.db" }
+  - { src: "/var/lib/marzban/db.sqlite3", name: "marzban-db.sqlite3" }
+backup_trees: []
+backup_misc: []
+backup_tar_paths:
+  - "etc/x-ui"
+  - "opt/amnezia"
+  - "var/lib/marzban"
+  - "root/cert"
+  - "root/.acme.sh"
+  - "etc/wireguard"
+  - "etc/host-firewall.nft"
+  - "etc/ssh"
+  - "root/.ssh"
+  - "home/mfesenko/.ssh"
+  - "root/cobalt"
+  - "root/3proxy"
+  - "opt/marzban/docker-compose.yml"
+  - "var/lib/docker/volumes/amnezia-telemt-data"
+  - "var/lib/docker/volumes/amnezia-mtproxy-data"
+backup_tar_exclude:
+  - "etc/x-ui/x-ui.db*"
+
+verify_sqlite: ["x-ui.db", "marzban-db.sqlite3"]
+verify_trees: []
+verify_archive_paths:
+  - "etc/x-ui/"
+  - "opt/amnezia/"
+  - "var/lib/marzban/"
+  - "root/cert/"
+  - "etc/wireguard/"
+  - "etc/host-firewall.nft"
+  - "etc/ssh/"
+
+# --- аудит ---
+audit_expect_fail2ban: true
+audit_expect_docker_user_rules: true
+# Публичные порты VPN/proxy — считаются намеренными.
+# 8790 (панель x-ui) слушает на *:8790, но наружу не пробивается: его нет в
+# whitelist'е host_firewall, поэтому пакеты с аплинка дропаются в input-цепочке.
+audit_allowed_public_tcp: [22, 443, 1080, 2096, 4433, 4443, 8790, 10185, 40298, 40645, 42438, 47156]
+audit_allowed_public_udp: [443, 500, 1080, 4500, 41641, 19452, 19498, 21296, 32798, 33886, 40087, 40298, 42697, 44438, 49462]
+expected_stopped_containers: ["cobalt", "dockhand", "3proxy-3proxy-1"]
+
+# --- firewall для docker-публикаций (по умолчанию не применяется) ---
+docker_firewall_enabled: true
+docker_firewall_allow_tcp: [443, 4433, 4443, 40645]
+docker_firewall_allow_udp: [443, 500, 4500, 32798, 33886, 40087, 40298, 44438]
+
+# --- аудит/уборка ---
+audit_secret_files:
+  - "/root/cert/privkey.pem"
+  - "/root/backups/s3.env"
+
+cleanup_paths:
+  - "/opt/hiddify-manager.backup.2026-05-07-0842"
+  - "/opt/hiddify-manager.old.2026-05-07-0843"
+  - "/opt/hiddify-manager"
+cleanup_containers: ["cobalt", "dockhand", "3proxy-3proxy-1"]
+cleanup_units: ["netbird", "mtproxy.service"]
+cleanup_users: ["hiddify-panel", "hiddify-cli", "liberty-bridge", "dnstt", "nginx"]

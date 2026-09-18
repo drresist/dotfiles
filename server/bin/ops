@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# ops — операции по хостам: аудит, бэкапы, ротация ключей, firewall, cleanup.
+#
+#   ./bin/ops audit                 read-only проверка состояния (безопасно всегда)
+#   ./bin/ops backups               развернуть/обновить restic-бэкапы и cron
+#   ./bin/ops verify                проверка восстановлением из репозиториев
+#   ./bin/ops rotate-s3             сменить S3-ключи (с проверкой и откатом)
+#   ./bin/ops docker-firewall       правила DOCKER-USER (применение выключено по умолчанию)
+#   ./bin/ops cleanup               удаление легаси (применение выключено по умолчанию)
+#
+# Дополнительные флаги уходят в ansible-playbook без изменений:
+#   ./bin/ops audit --limit proxy
+#   ./bin/ops backups --check
+#   ./bin/ops rotate-s3 -e s3_access_key_id='<tenant>:<key_id>' -e s3_secret_access_key='<secret>'
+#   ./bin/ops backups --ask-vault-pass
+#
+# Ansible при отсутствии ставится сам через uv (без sudo).
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+usage() {
+	cat <<'USAGE'
+ops — операции по хостам (Ansible).
+
+Команды:
+  audit             только чтение: порты, контейнеры, свежесть бэкапов, дрейф
+  backups           развернуть/обновить restic-бэкап и cron на хостах
+  verify            restic check + реальное восстановление + проверка содержимого
+  rotate-s3         ротация S3-ключей: обновить, проверить, откатить при неудаче
+  docker-firewall   правила DOCKER-USER (нужен -e docker_firewall_apply=true)
+  cleanup           удаление легаси (нужен -e cleanup_apply=true)
+  help              эта справка
+
+Флаги Ansible передаются как есть: --limit, --check, --ask-vault-pass, -e ...
+USAGE
+}
+
+ensure_ansible() {
+	if command -v ansible-playbook >/dev/null 2>&1; then
+		return
+	fi
+	if command -v uv >/dev/null 2>&1; then
+		echo "ansible-playbook не найден — устанавливаю через uv (без sudo)..." >&2
+		uv tool install --quiet ansible-core
+		export PATH="$HOME/.local/bin:$PATH"
+		command -v ansible-playbook >/dev/null 2>&1 || {
+			echo "uv поставил ansible, но бинарник не в PATH" >&2
+			exit 1
+		}
+	else
+		echo "Нужен ansible-core. Варианты: uv tool install ansible-core | pipx install ansible-core | pacman -S ansible" >&2
+		exit 1
+	fi
+}
+
+case "${1:-}" in
+	audit)           tags="audit" ;;
+	backups)         tags="backups" ;;
+	verify)          tags="verify" ;;
+	rotate-s3)       tags="rotate-s3" ;;
+	docker-firewall) tags="docker-firewall" ;;
+	cleanup)         tags="cleanup" ;;
+	help|-h|--help|"")
+		usage
+		exit 0
+		;;
+	*)
+		echo "неизвестная команда: ${1}" >&2
+		usage
+		exit 2
+		;;
+esac
+
+shift
+
+ensure_ansible
+mkdir -p reports
+
+exec ansible-playbook site.yml --tags "$tags" "$@"

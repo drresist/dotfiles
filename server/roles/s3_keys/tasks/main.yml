@@ -1,0 +1,103 @@
+---
+# Ротация S3-ключей на хостах.
+#
+# Логика: сравнить желаемое содержимое env-файла с текущим -> при отличии
+# сделать копию, записать новое и проверить, что ключ реально работает ->
+# при неудаче вернуть предыдущий файл и упасть.
+# Идемпотентно: если ключи уже такие, ничего не пишется и копии не плодятся.
+
+- name: Require new credentials
+  ansible.builtin.assert:
+    that:
+      - s3_access_key_id | length > 0
+      - s3_secret_access_key | length > 0
+    fail_msg: >-
+      Передай новые ключи: --extra-vars "s3_access_key_id=<tenant>:<key_id> s3_secret_access_key=<secret>"
+      или через ansible-vault (group_vars/vault.yml).
+
+- name: Compose desired credentials file
+  ansible.builtin.set_fact:
+    s3_desired_content: |
+      # Управляется Ansible (dotfiles/server). Руками не править.
+      export AWS_ACCESS_KEY_ID="{{ s3_access_key_id }}"
+      export AWS_SECRET_ACCESS_KEY="{{ s3_secret_access_key }}"
+      export AWS_DEFAULT_REGION="{{ s3_region }}"
+      export S3_REPOSITORY="{{ restic_repo }}"
+
+- name: Stat current credentials file
+  ansible.builtin.stat:
+    path: "{{ restic_env_file }}"
+  register: s3_env_stat
+  become: "{{ restic_become }}"
+
+- name: Read current credentials file
+  ansible.builtin.slurp:
+    src: "{{ restic_env_file }}"
+  register: s3_env_slurp
+  become: "{{ restic_become }}"
+  no_log: true
+  when: s3_env_stat.stat.exists
+
+- name: Decide whether rotation is needed
+  ansible.builtin.set_fact:
+    s3_current_content: "{{ (s3_env_slurp.content | b64decode) if s3_env_stat.stat.exists else '' }}"
+  no_log: true
+
+- name: Rotate credentials (only when content differs)
+  when: s3_current_content != s3_desired_content
+  block:
+    - name: Back up current credentials file
+      ansible.builtin.copy:
+        src: "{{ restic_env_file }}"
+        dest: "{{ restic_env_file }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+        remote_src: true
+        mode: "0600"
+      become: "{{ restic_become }}"
+      when: s3_env_stat.stat.exists
+      register: s3_env_backup
+
+    - name: Write new credentials
+      ansible.builtin.copy:
+        content: "{{ s3_desired_content }}"
+        dest: "{{ restic_env_file }}"
+        mode: "0600"
+      become: "{{ restic_become }}"
+      no_log: true
+      register: s3_keys_written
+
+    - name: Validate new key against the repository
+      ansible.builtin.shell: |
+        set -eu
+        . "{{ restic_env_file }}"
+        export RESTIC_PASSWORD_FILE="{{ restic_password_file }}"
+        "{{ restic_bin }}" -r "$S3_REPOSITORY" snapshots --latest 1 --json >/dev/null
+        echo VALID
+      become: "{{ restic_become }}"
+      register: s3_validate
+      changed_when: false
+      failed_when: false
+
+    - name: Roll back an unusable key
+      when: "'VALID' not in (s3_validate.stdout | default(''))"
+      block:
+        - name: Restore previous credentials file
+          ansible.builtin.copy:
+            src: "{{ s3_env_backup.dest }}"
+            dest: "{{ restic_env_file }}"
+            remote_src: true
+            mode: "0600"
+          become: "{{ restic_become }}"
+          when: s3_env_stat.stat.exists
+
+        - name: Fail rotation
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: новый ключ не работает, предыдущий файл восстановлен.
+              Вывод: {{ s3_validate.stderr | default('') | trim }}
+
+- name: Report rotation result
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}:
+      {{ 'ключи обновлены и проверены' if s3_current_content != s3_desired_content
+         else 'ключи уже актуальны, изменений не потребовалось' }}
