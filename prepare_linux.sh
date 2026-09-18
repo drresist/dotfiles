@@ -101,19 +101,10 @@ install_tmux() {
 	fi
 }
 
-# Настройка tmux с использованием конфигурации gpakosz/.tmux
-setup_tmux() {
-	echo "Настройка tmux..."
-	if [ -d ~/.tmux ]; then
-		echo "Конфигурация tmux уже существует. Обновление..."
-		cd ~/.tmux && git pull && cd "$HOME"
-	else
-		git clone https://github.com/gpakosz/.tmux.git ~/.tmux
-	fi
-	ln -sf ~/.tmux/.tmux.conf ~/.tmux.conf
-	[ -f ~/.tmux.conf.local ] || cp ~/.tmux/.tmux.conf.local ~/.tmux.conf.local
-	echo "Конфигурация tmux установлена."
-}
+# Конфиг tmux из gpakosz/.tmux больше не ставится: он версионируется целиком
+# в configs/tmux/tmux.conf и линкуется install.sh (setup_configs).
+# tmux читает ~/.config/tmux/tmux.conf последним, поэтому он перекрывает и
+# /etc/tmux.conf, и оставшийся от старой установки ~/.tmux.conf.
 
 # Установка Neovim (pinned for reproducibility)
 NEOVIM_VERSION="v0.10.0"
@@ -150,24 +141,10 @@ install_neovim() {
 	fi
 }
 
-# Настройка LazyNvim
-setup_lazyvim() {
-	echo "Настройка LazyNvim..."
-	# Создаем резервную копию существующей конфигурации Neovim, если она есть
-	if [ -d ~/.config/nvim ]; then
-		local backup_suffix=$(date +%Y%m%d_%H%M%S)
-		mv ~/.config/nvim ~/.config/nvim.bak.$backup_suffix
-		echo "Существующая конфигурация сохранена как ~/.config/nvim.bak.$backup_suffix"
-	fi
-
-	# Клонируем стартовый шаблон LazyVim
-	git clone https://github.com/LazyVim/starter ~/.config/nvim
-
-	# Удаляем папку .git, чтобы отвязать от репозитория LazyVim
-	rm -rf ~/.config/nvim/.git
-
-	echo "LazyNvim установлен. Запустите 'nvim' для завершения установки плагинов."
-}
+# Конфиг LazyVim (Neovim) тоже версионируется в configs/nvim и линкуется
+# install.sh. Клонировать стартер поверх нельзя: это затрёт отслеживаемый
+# конфиг вместе с lazy-lock.json. Стартер не нужен вовсе — он дал только
+# начальный набор файлов, который теперь лежит в репо.
 
 install_jetbrains_nerd_font() {
 	echo "Установка JetBrains Nerd Font..."
@@ -587,8 +564,8 @@ usage() {
     echo "Supported OS: Linux (apt/yum/dnf) and macOS (Homebrew)"
     echo ""
     echo "Options:"
-    echo "  --tmux          Install tmux and setup config"
-    echo "  --nvim          Install Neovim and LazyNvim"
+    echo "  --tmux          Install tmux and link configs/tmux/tmux.conf"
+    echo "  --nvim          Install Neovim and link configs/nvim (LazyVim)"
     echo "  --fonts         Install JetBrains Nerd Font"
     echo "  --lazydocker    Install lazydocker"
     echo "  --k9s           Install k9s"
@@ -625,11 +602,11 @@ run_installer() {
                 ;;
             1|tmux)
                 install_tmux
-                setup_tmux
+                setup_configs
                 ;;
             2|nvim)
                 install_neovim
-                setup_lazyvim
+                setup_configs
                 ;;
             3|fonts)
                 install_jetbrains_nerd_font

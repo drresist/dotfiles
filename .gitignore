@@ -1,6 +1,11 @@
 *.bak.*
 .DS_Store
 
+# Omarchy генерирует тему Neovim внутри конфига (абсолютный симлинк на
+# ~/.local/state/omarchy/current/theme/neovim.lua) — машинное состояние,
+# install.sh пересоздаёт его при установке.
+configs/nvim/lua/plugins/theme.lua
+
 # server/: отчёты аудита и локальные секреты не коммитим
 server/reports/
 server/group_vars/vault.yml

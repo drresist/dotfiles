@@ -2,6 +2,83 @@
 
 Изменения dotfiles и окружения. Формат: дата, контекст, изменения, проверка.
 
+## 2026-09-19 — herdr/tmux/Neovim: текущие конфиги и алиасы Omarchy
+
+### Контекст
+
+- До этого репо описывал «чистую» машину: tmux ставился из gpakosz/.tmux,
+  Neovim — клоном LazyVim/starter поверх (с переносом старого конфига в `.bak`),
+  herdr-конфиг остался от macOS-эпохи (коммит 2026-08-13), а bash-слой Omarchy
+  не подхватывался вообще: `~/.bashrc` был копией `/etc/skel` без `source rc`,
+  поэтому алиасов `h`/`t`/`n`/`c`/`cx`/`cy`, `cd -> zd`, `ls -> eza` в шелле
+  не было (проверено `bash -lic 'alias h'`).
+- Сверка с `/etc/skel` показала, что реально работает: tmux — omarchy-дефолт
+  (файл побайтово равен `/etc/skel/.config/tmux/tmux.conf`), Neovim — конфиг
+  пакета omarchy-nvim (LazyVim + omarchy-плагины, от skel отличается только
+  сгенерированной ссылкой темы), herdr — omarchy-дефолт + `onboarding = false`.
+- То есть dotfiles ставили не то, что на машине: теперь в репо лежит то, что
+  действительно запускается.
+
+### Изменения
+
+- `configs/herdr/config.toml` — заменён на работающий (omarchy 4.0.3rc4,
+  herdr 0.9.1: тема `terminal`, маппинг tmux→herdr, prefix `ctrl+space`,
+  `onboarding = false`). Ключи macOS-эпохи (`agent_panel_scope`, `[ui.toast]`,
+  `auto_switch` вне `[theme]`) ушли вместе с файлом.
+- `configs/tmux/tmux.conf` — новый, отслеживается целиком; `install.sh` линкует
+  `~/.config/tmux/tmux.conf`. `setup_tmux` (клон gpakosz + `~/.tmux.conf`) убран
+  из `prepare_linux.sh` и `prepare_macos.sh`.
+- `configs/nvim/` — конфиг Neovim целиком, включая `lazy-lock.json`;
+  `install.sh` линкует каталог в `~/.config/nvim`. `setup_lazyvim` (клон стартера
+  с `mv ~/.config/nvim ...` в `.bak`) убран: он затирал отслеживаемый конфиг.
+  Сгенерированная Omarchy ссылка темы (`lua/plugins/theme.lua`) в репо не
+  хранится (машинное состояние) — `install.sh` пересоздаёт её абсолютной
+  ссылкой, потому что относительный путь omarchy из репо не резолвится.
+  В `.gitignore` добавлено исключение для неё.
+- `configs/omarchy/aliases.sh` — слой Omarchy не копируется, а подгружается из
+  установленного дерева (`$OMARCHY_PATH/default/bash/rc`, путь доискивается для
+  сессий без логин-профиля). Только bash (слой написан на bash: `shopt`, `bind`,
+  `open() (`); на машине без Omarchy — no-op.
+- `shell/.bashrc` — зафиксирован текущий рабочий (mproxy + PS1 со статусом
+  прокси, SSH_AUTH_SOCK Bitwarden) и получил `source` слоя Omarchy сверху.
+  Раньше `install.sh` подменил бы живой `~/.bashrc` «переносимым» из репо, и
+  mproxy бы потерялся. Добавлен `shell/.bash_profile` (source `.bashrc`).
+  Строка `alias ls='ls --color=auto'` не перенесена: выигрывает `ls -> eza`
+  из Omarchy. Добавлен фолбэк `EDITOR=nvim` для машин без Omarchy.
+- `install.sh` — `link()` теперь умеет каталоги (nvim линкуется целиком),
+  добавлена линковка tmux/bash_profile и пересоздание ссылки темы Neovim.
+- `prepare_linux.sh` / `prepare_macos.sh` / `common.sh` — `--tmux` и `--nvim`
+  вместо установки чужих конфигов зовут `setup_configs` (линковка из репо),
+  `--all` больше не дёргает удалённые функции. README обновлён.
+
+### Проверка
+
+- herdr: `herdr config check` на отслеживаемом файле → `config: ok` (в изоляции,
+  `HOME=<tmp>`).
+- tmux: `tmux -L <sock> -f configs/tmux/tmux.conf new-session -d` → без ошибок;
+  `status-position=top`, `prefix=C-Space`, `history-limit=50000`, 96 клавиш в
+  prefix-таблице. Порядок загрузки проверен экспериментом: `~/.config/tmux/tmux.conf`
+  перебивает и `~/.tmux.conf`, и `$XDG_CONFIG_HOME/tmux/tmux.conf` (tmux 3.7c).
+- Neovim: 12 lua-файлов — `luajit -b` без ошибок; headless-запуск на копии
+  конфига (`XDG_CONFIG_HOME=<tmp>`) → `BOOT_OK`, exit 0, со ссылкой темы и без неё.
+- `install.sh` на пустом `HOME` с фикстурами: первый прогон — links и бэкапы
+  (`*.bak.<timestamp>`), второй — все `ok`; ссылка темы создаётся, при обычном
+  файле на её месте — `skip` без потери содержимого.
+- Алиасы: в сессии, поднятой на этом `HOME`, доступны `h`/`t`/`ls`(eza) и функции
+  `n`/`zd`, `HISTSIZE=32768`, `EDITOR` из слоя Omarchy; при отсутствии дерева
+  Omarchy файл выходит с 0 и ничего не определяет.
+
+### Примечание
+
+- `omarchy-nvim-refresh` / `omarchy-reinstall-configs` перезаписывают
+  `~/.config/nvim` из `/etc/skel` (с бэкапом) — после них нужно повторить
+  `./install.sh`.
+- `~/.tmux` и `~/.tmux.conf`, оставшиеся от старой установки gpakosz, можно
+  удалить: они больше не используются (и на работу не влияют).
+- Живая машина не тронута: проверка шла на изолированном `HOME`. Чтобы применить,
+  `./install.sh` — он подменит `~/.bashrc` отслеживаемым (бэкап рядом) и
+  залинкует `~/.config/{herdr,tmux,nvim}` (текущие файлы уйдут в `.bak`).
+
 ## 2026-09-18 — server/: аудит хостов, off-site бэкапы, ротация ключей
 
 ### Контекст

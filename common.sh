@@ -115,9 +115,7 @@ install_system_tools() {
 
 install_all() {
 	install_tmux
-	setup_tmux
 	install_neovim
-	setup_lazyvim
 	install_jetbrains_nerd_font
 	install_lazydocker
 	install_k9s

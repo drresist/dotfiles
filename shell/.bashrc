@@ -1,60 +1,78 @@
-# Bash configuration
-# Place as ~/.bashrc additions or ~/.bash_profile
+#
+# ~/.bashrc — рабочий bash на Omarchy-машине:
+# слой Omarchy + локальные правки поверх него.
+#
 
-# Path
-export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"
+# If not running interactively, don't do anything
+[[ $- != *i* ]] && return
 
-# Editor
-export EDITOR="nvim"
-export VISUAL="nvim"
-
-# History
-export HISTSIZE=100000
-export HISTFILESIZE=100000
-export HISTCONTROL="erasedups:ignoreboth"
-export HISTTIMEFORMAT="%F %T "
-shopt -s histappend
-shopt -s cmdhist
-
-# Check window size after each command
-shopt -s checkwinsize
-
-# Auto-cd
-shopt -s autocd 2>/dev/null
-
-# fzf
-export FZF_DEFAULT_OPTS="--height 40% --layout=reverse --border --preview 'bat --color=always --style=numbers --line-range=:500 {}'"
-export FZF_CTRL_T_OPTS="--preview 'bat --color=always --style=numbers --line-range=:500 {}'"
-export FZF_ALT_C_OPTS="--preview 'eza --tree --level=2 --color=always {} | head -200'"
-[ -f ~/.fzf.bash ] && source ~/.fzf.bash
-
-# zoxide
-eval "$(zoxide init bash)"
-
-# Starship
-eval "$(starship init bash)"
-
-# Enable bash completion
-if [ -f /etc/bash_completion ]; then
-    . /etc/bash_completion
+# Дефолтный слой Omarchy: OMARCHY_PATH и PATH, EDITOR/BROWSER/locale, история,
+# completion, алиасы (a/c/cx/cy/h/t/n/ff/g/..., cd -> zd, ls/lt -> eza),
+# functions и init (mise, starship, zoxide).
+# Сам слой в репо не копируется — см. configs/omarchy/aliases.sh.
+if [ -r "$HOME/.dotfiles/configs/omarchy/aliases.sh" ]; then
+	. "$HOME/.dotfiles/configs/omarchy/aliases.sh"
 fi
 
-# Source common aliases (centralized in configs/eza/aliases.sh, made available via ~/.dotfiles)
-# shellcheck disable=SC1090
-[ -f ~/.dotfiles/configs/eza/aliases.sh ] && source ~/.dotfiles/configs/eza/aliases.sh
+#
+# Локальные правки. Всё ниже перекрывает слой Omarchy.
+#
 
-# Functions
-mkcd() {
-    mkdir -p "$1" && cd "$1"
+# Слой Omarchy (envs) ставит EDITOR сам; фолбэк — для машин без Omarchy.
+export EDITOR="${EDITOR:-nvim}"
+
+alias grep='grep --color=auto'
+
+__mproxy_prompt_status() {
+  if [[ -n ${http_proxy:-} || -n ${HTTP_PROXY:-} ]]; then
+    printf ' proxy:on'
+  else
+    printf ' proxy:off'
+  fi
 }
 
-fzfp() {
-    fzf --preview 'bat --style=numbers --color=always --line-range :500 {}'
+PS1='[\u@\h \W$(__mproxy_prompt_status)]\$ '
+export PATH="$HOME/.local/bin:$PATH"
+export SSH_AUTH_SOCK="$HOME/.var/app/com.bitwarden.desktop/data/.bitwarden-ssh-agent.sock"
+
+# Enable or disable Mihomo for commands launched from this terminal.
+mproxy() {
+  case "${1:-status}" in
+    on)
+      if ! mihoro start; then
+        printf 'Failed to start Mihomo.\n' >&2
+        return 1
+      fi
+
+      export http_proxy='http://127.0.0.1:7890'
+      export https_proxy="$http_proxy"
+      export all_proxy='socks5h://127.0.0.1:7892'
+      export no_proxy='localhost,127.0.0.1,::1'
+      export HTTP_PROXY="$http_proxy"
+      export HTTPS_PROXY="$https_proxy"
+      export ALL_PROXY="$all_proxy"
+      export NO_PROXY="$no_proxy"
+      printf 'Terminal proxy: ON (Mihomo 127.0.0.1:7890)\n'
+      ;;
+    off)
+      local mihomo_status=0
+      mihoro stop || mihomo_status=$?
+      unset http_proxy https_proxy all_proxy no_proxy
+      unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+      printf 'Terminal proxy: OFF\n'
+      return "$mihomo_status"
+      ;;
+    status)
+      mihoro status
+      if [[ -n ${http_proxy:-} || -n ${HTTP_PROXY:-} ]]; then
+        printf 'Terminal environment: ON (%s)\n' "${http_proxy:-$HTTP_PROXY}"
+      else
+        printf 'Terminal environment: OFF\n'
+      fi
+      ;;
+    *)
+      printf 'Usage: mproxy {on|off|status}\n' >&2
+      return 2
+      ;;
+  esac
 }
-
-# Colors
-export PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-
-# Better history search
-bind '"\e[A": history-search-backward'
-bind '"\e[B": history-search-forward'

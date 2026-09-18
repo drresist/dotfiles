@@ -55,7 +55,8 @@ The installer is idempotent for most things.
 
 ## CLI flags (both scripts)
 - `--all` : everything
-- `--tmux`, `--nvim`, `--fonts`, `--lazydocker`, `--k9s`
+- `--tmux`, `--nvim` : tmux / Neovim (both link their tracked configs)
+- `--fonts`, `--lazydocker`, `--k9s`
 - `--cli` : fzf, ripgrep, fd, bat, eza, zoxide, tre, herdr
 - `--herdr` : herdr (agent multiplexer for AI coding agents)
 - `--dev` : gh, delta, docker
@@ -68,28 +69,37 @@ The installer is idempotent for most things.
 
 ## Configs & portability
 `install.sh` (also invoked by `prepare.sh --configs`):
-- Symlinks `~/.config/*` (starship, bat, btop, git, atuin, herdr, fish),
-  `~/.gitconfig`, `~/.zshrc`, `~/.bashrc`.
+- Symlinks `~/.config/*` (starship, bat, btop, git, atuin, **herdr, tmux, nvim**),
+  `~/.gitconfig`, `~/.bash_profile`, `~/.bashrc`, `~/.zshrc`.
 - Creates `~/.dotfiles` symlink → your clone. This makes sourcing portable.
+- Recreates the generated Neovim theme link
+  (`~/.config/nvim/lua/plugins/theme.lua`) when Omarchy state exists — that link
+  is per-machine, so it is not tracked.
 - Idempotent: correct links are skipped, stale links re-pointed, real files
   backed up as `*.bak.<timestamp>` before linking.
 
 Common aliases (eza + git + docker + k8s + helpers) live in one place:
 `configs/eza/aliases.sh`
 
+Aliases shipped by Omarchy (`h`→herdr, `t`→tmux, `n`→nvim, `c`/`cx`/`cy`→agents,
+`cd`→zd, `ls`/`lt`→eza, …) are **not copied** here: `shell/.bashrc` loads them
+from the installed Omarchy tree through `configs/omarchy/aliases.sh`, so the
+system copy stays authoritative. The layer is bash-only (Omarchy writes it in
+bash syntax) and is a no-op on machines without Omarchy.
+
 Shell rcs source it via `~/.dotfiles/...` (or set `DOTFILES`).
 
 ## Installed / managed items (high level)
-- tmux + gpakosz/.tmux
-- Neovim 0.10 + LazyVim starter
+- tmux + tracked `configs/tmux/tmux.conf` (Omarchy key layout, prefix C-Space)
+- Neovim + LazyVim config tracked in `configs/nvim` (with `lazy-lock.json`)
+- herdr + tracked `configs/herdr/config.toml`
 - JetBrains Nerd Font
 - CLI: fzf, rg, fd, bat, eza, zoxide, tre, herdr
 - Dev: gh, git-delta, Docker
 - Shells + starship
 - System: btop, ncdu
 - Flatpak (Linux only, in `prepare_linux.sh`)
-- Configs for starship, bat, btop, git, fish, and shell aliases
-
+- Configs for starship, bat, btop, git, fish, tmux, nvim, herdr, shell aliases
 
 ## Project structure
 - `install.sh` — idempotent config linker (symlinks + backups)
