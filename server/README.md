@@ -62,12 +62,11 @@ BUNDLE_PASSPHRASE=... ./bin/collect-secrets  # неинтерактивно (cro
   `/etc/ipsec*`, `/etc/wireguard`, `/etc/3proxy` из работающих amnezia-контейнеров.
 - В конце идёт самопроверка: архив расшифровывается той же фразой, а список файлов
   внутри сверяется с собранным деревом; при расхождении скрипт падает.
-- Чего не будет: файлов под root на `cloudcode` (там нет sudo) и приватных
-  SSH-ключей из Bitwarden-агента — они остаются в `GAPS.txt` и в README архива.
-  Root-only файлы можно добавить один раз: под root в консоли провайдера
-  (`/opt/dockhand`, `/etc/rclone`, том dockhand) сложить их в
-  `/home/mfesenko/root-dump` с `chown mfesenko:` — дальше каталог подхватывается
-  автоматически (команда целиком — в README внутри архива).
+- Чего не будет: приватных SSH-ключей из Bitwarden-агента (они не на диске).
+  Root-only файлы `cloudcode` (`/opt/dockhand`, `/etc/rclone`, том dockhand)
+  собираются через `~/root-dump`: `mfesenko` в группе `docker`, поэтому достаточно
+  `docker run -u 0` с bind-mount этих путей (однострочник — в README внутри архива).
+  Пока каталога нет, в `GAPS.txt` висит одна строка `НЕТ: /home/mfesenko/root-dump`.
 
 ## Секреты
 
