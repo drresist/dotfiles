@@ -64,6 +64,10 @@ BUNDLE_PASSPHRASE=... ./bin/collect-secrets  # неинтерактивно (cro
   внутри сверяется с собранным деревом; при расхождении скрипт падает.
 - Чего не будет: файлов под root на `cloudcode` (там нет sudo) и приватных
   SSH-ключей из Bitwarden-агента — они остаются в `GAPS.txt` и в README архива.
+  Root-only файлы можно добавить один раз: под root в консоли провайдера
+  (`/opt/dockhand`, `/etc/rclone`, том dockhand) сложить их в
+  `/home/mfesenko/root-dump` с `chown mfesenko:` — дальше каталог подхватывается
+  автоматически (команда целиком — в README внутри архива).
 
 ## Секреты
 
