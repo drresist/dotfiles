@@ -49,9 +49,11 @@ OUT_DIR=/mnt/usb ./bin/collect-secrets       # куда положить
 BUNDLE_PASSPHRASE=... ./bin/collect-secrets  # неинтерактивно (cron)
 ```
 
-- Результат — `secrets-bundle-<YYYYmmdd-HHMM>.tar.gz.gpg` (0600), симметричное
+- Результат — `secrets-bundle-<YYYYmmdd-HHMMSS>.tar.gz.gpg` (0600), симметричное
   шифрование gpg AES256; парольная фраза нигде не сохраняется, её место — Bitwarden
-  (туда же вложением сам архив).
+  (туда же вложением сам архив). Архивы копятся по одному на прогон: распаковывать
+  нужно по имени файла, маска `secrets-bundle-*.gpg` при двух файлах ломает `gpg -d`
+  (`usage: gpg [options] --decrypt [filename]`).
 - Внутри: `README.md` (что где лежит и как восстанавливать), каталог на хост,
   `MANIFEST.tsv` (что собрано), `GAPS.txt` (что не собрано и почему),
   `CRON-<host>.txt`, `RESTIC-REPOS.txt` (несекретные адреса репозиториев).
