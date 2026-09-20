@@ -23,6 +23,24 @@ Bootstrap installer + portable configuration files for Linux and macOS.
 ./install.sh
 ```
 
+## Optional Omarchy-like macOS desktop
+
+The [macOS desktop bundle](macos/omarchy/README.md) adds AeroSpace, SketchyBar,
+JankyBorders, Ghostty and Fish/Starship styling. It is opt-in and has its own
+file-level backups and restore command:
+
+```sh
+cd macos/omarchy
+bash packages.sh
+bash install.sh
+bash activate.sh
+```
+
+Run the desktop installer **after** the root dotfiles linker: both manage
+Starship, so running the root linker later replaces the desktop prompt theme.
+The desktop installer preserves existing editor settings and unrelated plugins.
+Restore instructions and macOS permissions are documented in its README.
+
 ## Prerequisites
 - For interactive menu: `gum` (install via brew/apt or your pkg manager).
 - macOS: Homebrew (script can install it).

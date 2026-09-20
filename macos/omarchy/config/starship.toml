@@ -1,0 +1,22 @@
+add_newline = true
+format = """$directory$git_branch$git_status$character"""
+
+[directory]
+style = "bold #a6e3a1"
+truncation_length = 4
+truncate_to_repo = false
+read_only = " 󰌾"
+
+[git_branch]
+symbol = " "
+style = "bold #89b4fa"
+format = "[$symbol$branch]($style) "
+
+[git_status]
+style = "bold #f9e2af"
+format = "([$all_status$ahead_behind]($style) )"
+
+[character]
+success_symbol = "[❯](bold #a6e3a1)"
+error_symbol = "[❯](bold #f38ba8)"
+vimcmd_symbol = "[❮](bold #cba6f7)"

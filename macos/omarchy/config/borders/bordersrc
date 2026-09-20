@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec borders style=round width=5.0 hidpi=on active_color=0xffa6e3a1 inactive_color=0xff45475a

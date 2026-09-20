@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/plugins"
+printf -v PLUGIN_COMMAND_DIR '%q' "$PLUGIN_DIR"
+
+sketchybar --bar \
+  height=30 \
+  position=top \
+  color=0xee1a1b26 \
+  shadow=off \
+  sticky=on \
+  padding_left=8 \
+  padding_right=8 \
+  corner_radius=9 \
+  margin=6 \
+  y_offset=2
+
+sketchybar --default \
+  icon.font="SF Pro:Semibold:13.0" \
+  label.font="SF Pro:Semibold:12.0" \
+  icon.color=0xffcdd6f4 \
+  label.color=0xffcdd6f4 \
+  padding_left=7 \
+  padding_right=7 \
+  background.height=22 \
+  background.corner_radius=6
+
+sketchybar --add event aerospace_workspace_change
+
+for sid in 1 2 3 4 5 6 7 8 9; do
+  sketchybar --add item "space.$sid" left \
+    --set "space.$sid" \
+      icon="$sid" \
+      label.drawing=off \
+      click_script="aerospace workspace $sid" \
+      script="$PLUGIN_COMMAND_DIR/workspace.sh $sid" \
+    --subscribe "space.$sid" aerospace_workspace_change
+done
+
+sketchybar --add item front_app left \
+  --set front_app icon.drawing=off script="$PLUGIN_COMMAND_DIR/front_app.sh" \
+  --subscribe front_app front_app_switched
+
+sketchybar --add item clock right \
+  --set clock icon="◷" update_freq=10 script="$PLUGIN_COMMAND_DIR/clock.sh"
+
+sketchybar --add item battery right \
+  --set battery update_freq=60 script="$PLUGIN_COMMAND_DIR/battery.sh" \
+  --subscribe battery system_woke power_source_change
+
+sketchybar --update
