@@ -69,8 +69,13 @@ AeroSpace запускается при входе в систему; его `af
 | Option + Shift + ; | Service mode: Esc — выход, R — flatten, F — floating |
 | Command + ` | Выпадающий терминал Ghostty |
 
-Стандартное меню macOS можно скрыть: **Control Center → Automatically hide and show
-the menu bar → Always**. Если позже отключите SketchyBar, уменьшите `outer.top = 38`
+Чтобы не было двух панелей, скройте стандартное меню macOS:
+**Control Center → Automatically hide and show the menu bar → Always**.
+SketchyBar сам его не скрывает; родное меню будет доступно при наведении на верхний край.
+После обновления файлов примените панель командой `sketchybar --reload`.
+Рабочие столы имеют фиксированную ширину, батарея показывает процент
+(`+` означает питание от сети), часы — только время.
+Если позже отключите SketchyBar, уменьшите `outer.top = 38`
 в AeroSpace. Настройки Mission Control автоматически не меняются.
 
 ## Восстановление
